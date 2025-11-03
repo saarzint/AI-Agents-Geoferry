@@ -1,0 +1,92 @@
+{
+  "scholarships": [
+    {
+      "name": "Global Tech Innovators Scholarship",
+      "provider": "TechFuture Foundation",
+      "category": "Merit-Based",
+      "award_amount": "5000",
+      "deadline": "2025-12-15",
+      "renewable_flag": true,
+      "description": "Supports students demonstrating outstanding innovation in technology and software development. Recipients gain access to mentorship programs and internship opportunities with leading tech companies.",
+      "eligibility_summary": "Minimum 3.0 GPA required. Open to Computer Science, Software Engineering, and Information Technology majors. Innovation project portfolio required.",
+      "source_url": "https://techfuture.org/scholarships/global-tech"
+    },
+    {
+      "name": "STEM Women Empowerment Grant",
+      "provider": "WomenInSTEM Alliance",
+      "category": "Demographic-Specific",
+      "award_amount": "3000",
+      "deadline": "2025-11-10",
+      "renewable_flag": false,
+      "description": "Encourages women to pursue education and careers in STEM fields by providing financial support and connecting recipients with female role models in science and technology industries.",
+      "eligibility_summary": "Female students in STEM fields including Engineering, Computer Science, Mathematics, Physics, Chemistry, or Biology. Personal statement essay required.",
+      "source_url": "https://womeninstem.org/grants/empower"
+    },
+    {
+      "name": "Future Engineers Need-Based Scholarship",
+      "provider": "Global Engineers Network",
+      "category": "Need-Based",
+      "award_amount": "2000",
+      "deadline": "2025-10-30",
+      "renewable_flag": false,
+      "description": "Supports engineering students with demonstrated financial need, helping to remove economic barriers to quality engineering education and career advancement.",
+      "eligibility_summary": "Engineering majors with demonstrated financial need. Minimum 2.5 GPA required. Maximum family income $60,000.",
+      "source_url": "https://genetwork.org/scholarships/future-engineers"
+    },
+    {
+      "name": "Green Planet Sustainability Scholarship",
+      "provider": "EcoWorld Foundation",
+      "category": "Major-Specific",
+      "award_amount": "4000",
+      "deadline": "2025-12-01",
+      "renewable_flag": true,
+      "description": "For students dedicated to environmental protection and sustainability projects. Recipients participate in annual environmental conferences and receive networking opportunities with green industry leaders.",
+      "eligibility_summary": "Environmental Science, Sustainability Studies, Environmental Engineering, or Ecology majors. Minimum 3.2 GPA. Sustainability project proposal and essay required.",
+      "source_url": "https://ecoworld.org/scholarships/green-planet"
+    },
+    {
+      "name": "Essay Excellence Scholarship",
+      "provider": "Writers United Foundation",
+      "category": "Essay Required",
+      "award_amount": "1000",
+      "deadline": "2025-11-25",
+      "renewable_flag": false,
+      "description": "Recognizes excellence in written communication and creativity. Winners receive publication opportunities in the foundation's annual anthology and access to writing workshops.",
+      "eligibility_summary": "Open to all majors. Requires 1000-word essay on creativity in education. No GPA minimum.",
+      "source_url": "https://writersunited.org/scholarships/essay-excellence"
+    },
+    {
+      "name": "First-Generation College Success Award",
+      "provider": "PathBreakers Foundation",
+      "category": "Demographic-Specific",
+      "award_amount": "3500",
+      "deadline": "2025-11-15",
+      "renewable_flag": true,
+      "description": "Supporting first-generation college students in achieving their academic goals by providing financial assistance and comprehensive mentorship programs designed specifically for first-gen challenges.",
+      "eligibility_summary": "First-generation college students with financial need. Minimum 2.8 GPA. Maximum family income $80,000. Personal essay required.",
+      "source_url": "https://pathbreakers.org/scholarships/first-gen"
+    },
+    {
+      "name": "Business Leadership Excellence Scholarship",
+      "provider": "Future Leaders Institute",
+      "category": "Merit-Based",
+      "award_amount": "6000",
+      "deadline": "2025-12-10",
+      "renewable_flag": true,
+      "description": "Rewards outstanding academic performance and leadership potential in business fields. Recipients gain exclusive access to executive mentorship programs and leadership development workshops.",
+      "eligibility_summary": "Business Administration, Economics, Finance, Marketing, or Management majors. Minimum 3.5 GPA. Leadership experience and letters of recommendation required.",
+      "source_url": "https://futureleaders.org/scholarships/business-excellence"
+    },
+    {
+      "name": "Healthcare Heroes Scholarship",
+      "provider": "Medical Futures Foundation",
+      "category": "Major-Specific",
+      "award_amount": "7500",
+      "deadline": "2026-01-15",
+      "renewable_flag": true,
+      "description": "Supporting future healthcare professionals dedicated to community service. Recipients participate in medical mission trips and receive career guidance from established healthcare professionals.",
+      "eligibility_summary": "Pre-Med, Nursing, Public Health, Pharmacy, or Medical Technology majors. Minimum 3.3 GPA. Community service hours and healthcare service essay required.",
+      "source_url": "https://medicalfutures.org/scholarships/healthcare-heroes"
+    }
+  ]
+}

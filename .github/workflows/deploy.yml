@@ -1,0 +1,28 @@
+name: Deploy to GCP Cloud Run
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker europe-west1-docker.pkg.dev --quiet
+
+      - name: Build Docker image
+        run: docker build -t europe-west1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/${{ secrets.GCP_REPO }}/${{ secrets.GCP_SERVICE }}:latest .
+
+      - name: Push Docker image
+        run: docker push europe-west1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/${{ secrets.GCP_REPO }}/${{ secrets.GCP_SERVICE }}:latest
+
+      - name: Deploy to Cloud Run
+        run: gcloud run deploy ${{ secrets.GCP_SERVICE }} --image=europe-west1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/${{ secrets.GCP_REPO }}/${{ secrets.GCP_SERVICE }}:latest --region=${{ secrets.GCP_REGION }} --allow-unauthenticated --memory=8Gi --cpu=2

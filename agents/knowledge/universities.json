@@ -1,0 +1,387 @@
+{
+  "universities": [
+    {
+      "id": 1,
+      "name": "Massachusetts Institute of Technology",
+      "short_name": "MIT",
+      "location": {
+        "city": "Cambridge",
+        "state": "Massachusetts",
+        "region": "Northeast",
+        "country": "USA"
+      },
+      "basic_info": {
+        "type": "Private",
+        "founded": 1861,
+        "enrollment": 11520,
+        "campus_type": "Urban",
+        "website": "https://web.mit.edu"
+      },
+      "academics": {
+        "programs": [
+          {
+            "name": "Engineering",
+            "ranking": 1,
+            "strength": "Exceptional"
+          },
+          {
+            "name": "Computer Science",
+            "ranking": 1,
+            "strength": "Exceptional"
+          },
+          {
+            "name": "Business",
+            "ranking": 5,
+            "strength": "Excellent"
+          },
+          {
+            "name": "Physics",
+            "ranking": 1,
+            "strength": "Exceptional"
+          }
+        ],
+        "student_faculty_ratio": 3,
+        "graduation_rate": 0.96
+      },
+      "admissions": {
+        "acceptance_rate": 0.04,
+        "average_sat": 1520,
+        "average_act": 35,
+        "application_deadline": "January 1",
+        "early_decision": true
+      },
+      "financial": {
+        "tuition": 59750,
+        "total_cost": 82730,
+        "financial_aid_percentage": 0.58,
+        "average_aid": 53790
+      },
+      "rankings": {
+        "us_news": 2,
+        "qs_world": 1,
+        "times_higher_ed": 5,
+        "forbes": 2
+      },
+      "notable_features": [
+        "Top STEM programs",
+        "Innovation hub",
+        "Startup culture",
+        "Research excellence"
+      ],
+      "last_updated": "2024-09-01",
+      "data_sources": [
+        "us_news",
+        "official_website",
+        "college_board"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "Stanford University",
+      "short_name": "Stanford",
+      "location": {
+        "city": "Stanford",
+        "state": "California",
+        "region": "West",
+        "country": "USA"
+      },
+      "basic_info": {
+        "type": "Private",
+        "founded": 1885,
+        "enrollment": 17249,
+        "campus_type": "Suburban",
+        "website": "https://www.stanford.edu"
+      },
+      "academics": {
+        "programs": [
+          {
+            "name": "Engineering",
+            "ranking": 2,
+            "strength": "Exceptional"
+          },
+          {
+            "name": "Computer Science",
+            "ranking": 1,
+            "strength": "Exceptional"
+          },
+          {
+            "name": "Business",
+            "ranking": 1,
+            "strength": "Exceptional"
+          },
+          {
+            "name": "Medicine",
+            "ranking": 3,
+            "strength": "Exceptional"
+          }
+        ],
+        "student_faculty_ratio": 5,
+        "graduation_rate": 0.95
+      },
+      "admissions": {
+        "acceptance_rate": 0.035,
+        "average_sat": 1505,
+        "average_act": 34,
+        "application_deadline": "January 2",
+        "early_decision": false
+      },
+      "financial": {
+        "tuition": 61731,
+        "total_cost": 87225,
+        "financial_aid_percentage": 0.54,
+        "average_aid": 58000
+      },
+      "rankings": {
+        "us_news": 6,
+        "qs_world": 3,
+        "times_higher_ed": 4,
+        "forbes": 3
+      },
+      "notable_features": [
+        "Silicon Valley connections",
+        "Entrepreneurship",
+        "Innovation",
+        "Beautiful campus"
+      ],
+      "last_updated": "2024-09-01",
+      "data_sources": [
+        "us_news",
+        "official_website",
+        "college_board"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "University of California, Berkeley",
+      "short_name": "UC Berkeley",
+      "location": {
+        "city": "Berkeley",
+        "state": "California",
+        "region": "West",
+        "country": "USA"
+      },
+      "basic_info": {
+        "type": "Public",
+        "founded": 1868,
+        "enrollment": 45057,
+        "campus_type": "Urban",
+        "website": "https://www.berkeley.edu"
+      },
+      "academics": {
+        "programs": [
+          {
+            "name": "Engineering",
+            "ranking": 3,
+            "strength": "Exceptional"
+          },
+          {
+            "name": "Computer Science",
+            "ranking": 4,
+            "strength": "Exceptional"
+          },
+          {
+            "name": "Business",
+            "ranking": 7,
+            "strength": "Excellent"
+          },
+          {
+            "name": "Chemistry",
+            "ranking": 1,
+            "strength": "Exceptional"
+          }
+        ],
+        "student_faculty_ratio": 19,
+        "graduation_rate": 0.93
+      },
+      "admissions": {
+        "acceptance_rate": 0.11,
+        "average_sat": 1430,
+        "average_act": 32,
+        "application_deadline": "November 30",
+        "early_decision": false
+      },
+      "financial": {
+        "tuition": 14826,
+        "total_cost": 39000,
+        "financial_aid_percentage": 0.68,
+        "average_aid": 24000
+      },
+      "rankings": {
+        "us_news": 22,
+        "qs_world": 10,
+        "times_higher_ed": 8,
+        "forbes": 13
+      },
+      "notable_features": [
+        "Public ivy",
+        "Research excellence",
+        "Diverse student body",
+        "Academic prestige"
+      ],
+      "last_updated": "2024-09-01",
+      "data_sources": [
+        "us_news",
+        "official_website",
+        "college_board"
+      ]
+    },
+    {
+      "id": 4,
+      "name": "Carnegie Mellon University",
+      "short_name": "CMU",
+      "location": {
+        "city": "Pittsburgh",
+        "state": "Pennsylvania",
+        "region": "Northeast",
+        "country": "USA"
+      },
+      "basic_info": {
+        "type": "Private",
+        "founded": 1900,
+        "enrollment": 15818,
+        "campus_type": "Urban",
+        "website": "https://www.cmu.edu"
+      },
+      "academics": {
+        "programs": [
+          {
+            "name": "Computer Science",
+            "ranking": 2,
+            "strength": "Exceptional"
+          },
+          {
+            "name": "Engineering",
+            "ranking": 8,
+            "strength": "Excellent"
+          },
+          {
+            "name": "Business",
+            "ranking": 16,
+            "strength": "Very Good"
+          },
+          {
+            "name": "Drama",
+            "ranking": 3,
+            "strength": "Exceptional"
+          }
+        ],
+        "student_faculty_ratio": 10,
+        "graduation_rate": 0.92
+      },
+      "admissions": {
+        "acceptance_rate": 0.13,
+        "average_sat": 1500,
+        "average_act": 34,
+        "application_deadline": "January 3",
+        "early_decision": true
+      },
+      "financial": {
+        "tuition": 61344,
+        "total_cost": 83000,
+        "financial_aid_percentage": 0.47,
+        "average_aid": 45000
+      },
+      "rankings": {
+        "us_news": 25,
+        "qs_world": 52,
+        "times_higher_ed": 28,
+        "forbes": 22
+      },
+      "notable_features": [
+        "Tech innovation",
+        "Robotics",
+        "AI research",
+        "Interdisciplinary approach"
+      ],
+      "last_updated": "2024-09-01",
+      "data_sources": [
+        "us_news",
+        "official_website",
+        "college_board"
+      ]
+    },
+    {
+      "id": 5,
+      "name": "University of Michigan - Ann Arbor",
+      "short_name": "UMich",
+      "location": {
+        "city": "Ann Arbor",
+        "state": "Michigan",
+        "region": "Midwest",
+        "country": "USA"
+      },
+      "basic_info": {
+        "type": "Public",
+        "founded": 1817,
+        "enrollment": 50278,
+        "campus_type": "College Town",
+        "website": "https://umich.edu"
+      },
+      "academics": {
+        "programs": [
+          {
+            "name": "Engineering",
+            "ranking": 7,
+            "strength": "Excellent"
+          },
+          {
+            "name": "Business",
+            "ranking": 4,
+            "strength": "Exceptional"
+          },
+          {
+            "name": "Medicine",
+            "ranking": 12,
+            "strength": "Excellent"
+          },
+          {
+            "name": "Psychology",
+            "ranking": 3,
+            "strength": "Exceptional"
+          }
+        ],
+        "student_faculty_ratio": 15,
+        "graduation_rate": 0.93
+      },
+      "admissions": {
+        "acceptance_rate": 0.20,
+        "average_sat": 1350,
+        "average_act": 31,
+        "application_deadline": "February 1",
+        "early_decision": false
+      },
+      "financial": {
+        "tuition": 17786,
+        "total_cost": 32000,
+        "financial_aid_percentage": 0.67,
+        "average_aid": 18000
+      },
+      "rankings": {
+        "us_news": 23,
+        "qs_world": 21,
+        "times_higher_ed": 22,
+        "forbes": 25
+      },
+      "notable_features": [
+        "Strong alumni network",
+        "Research opportunities",
+        "School spirit",
+        "Comprehensive programs"
+      ],
+      "last_updated": "2024-09-01",
+      "data_sources": [
+        "us_news",
+        "official_website",
+        "college_board"
+      ]
+    }
+  ],
+  "metadata": {
+    "total_universities": 5,
+    "last_full_update": "2024-09-01",
+    "data_version": "1.0",
+    "description": "Initial seed data for university search system - focused on top-tier universities for testing",
+    "coverage_regions": ["Northeast", "West", "Midwest"],
+    "next_update_planned": "2024-12-01"
+  }
+}

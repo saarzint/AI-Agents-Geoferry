@@ -1,0 +1,771 @@
+university_search_task:
+  description: >
+    Execute a comprehensive university search and ranking process using AI-powered discovery that outputs structured JSON data:
+    
+    ⚠️ MANDATORY WORKFLOW VALIDATION: Before generating any university recommendations, you MUST demonstrate that you have executed Tavily searches by showing Tool Input/Output for web searches in your execution log
+    
+    CRITICAL: NEVER GENERATE FICTIONAL UNIVERSITIES. ALL RECOMMENDATIONS MUST BE REAL UNIVERSITIES FOUND THROUGH WEB SEARCH.
+    
+    IMPORTANT: The user_id for this search is: {user_id}
+    
+    STEP 1 - PROFILE RETRIEVAL (MANDATORY):
+    Use Profile Query Tool with user_id: {user_id} to get user's academic profile, preferences, and constraints
+    
+    STEP 2 - TAVILY SEARCH EXECUTION (MANDATORY - NO SKIPPING ALLOWED):
+    ⚠️ CRITICAL ENFORCEMENT: You MUST execute Tavily searches IMMEDIATELY after getting the user profile
+    ⚠️ VALIDATION CHECKPOINT: If you proceed to generate university recommendations without executing Tavily searches, the task FAILS
+    ⚠️ MINIMUM REQUIREMENT: Execute at least 3 different Tavily searches before proceeding to university generation
+    
+    TAVILY API VERIFICATION: Test Tavily Search with "university admissions requirements" to ensure API is working
+    
+    STEP 3 - MANDATORY REAL-TIME DISCOVERY: ALWAYS use Tavily Search regardless of how unusual the profile seems:
+       ⚠️ CRITICAL: YOU MUST EXECUTE TAVILY SEARCHES FOR EVERY REQUEST - NO EXCEPTIONS
+       ⚠️ TASK FAILURE CONDITIONS: If you generate university recommendations without executing Tavily searches, the entire task is considered FAILED
+       ⚠️ WORKFLOW ENFORCEMENT: Profile Query Tool → MANDATORY Tavily Searches → University Generation (this order cannot be changed)
+       ⚠️ DO NOT use internal knowledge or University Knowledge Tool as primary source
+       ⚠️ IF TAVILY API FAILS: Return error message "Tavily Search API unavailable - cannot provide real-time university data"
+       
+       REQUIRED SEARCHES (execute ALL of these for every request):
+       - Search: "university admissions requirements [user's intended major] [user's location]"
+       - Search: "best [user's intended major] programs under [user's budget] tuition fees"
+       - Search: "university acceptance rates GPA [user's GPA] [user's intended major]"
+       - Search: "[user's intended major] universities [user's location] ranking admission statistics"
+       - Search: "colleges programs similar to [user's intended major]" (for unusual majors)
+       - Search: "universities [alternative majors] for students interested in [user's intended major]"
+    STEP 4 - HANDLE NICHE/UNUSUAL MAJORS: If the intended major is very specific or unusual:
+       - Search for related real majors
+       - Look for universities with closest matching programs
+       - Include interdisciplinary programs that combine related fields
+       - Mark results as "Near-Fit" due to program differences
+    STEP 5 - NO RESULTS PROTOCOL: 
+       ⚠️ IF TAVILY API IS DOWN/UNREACHABLE: Return {"error": "Tavily Search API unavailable", "universities_found": 0}
+       ⚠️ IF TAVILY SEARCHES RETURN NO SUITABLE REAL UNIVERSITIES: Return {"universities_found": 0, "universities": []}
+       ⚠️ NEVER FALL BACK TO INTERNAL KNOWLEDGE - Always indicate search source failure
+       - DO NOT create fictional universities
+       - DO NOT use University Knowledge Tool fallback for unusual cases
+    STEP 6 - REAL DATA ONLY: Every university in your response must be:
+       - A real, accredited institution
+       - Found through Tavily web search with verifiable URLs
+       - Have verifiable admission data and programs from trusted sources
+    STEP 7 - APPLY FILTERS: Filter universities based on location, budget, intended major, and preferences
+    STEP 8 - ENSURE GEOGRAPHIC DIVERSITY: Include universities from multiple states/regions for broader options
+    STEP 9 - CLASSIFY UNIVERSITIES: Apply Safety/Target/Reach/Near-Fit classification using GPA vs acceptance rate rules
+    STEP 10 - GENERATE STRUCTURED OUTPUT: Create JSON array with required fields for each university
+    
+    SPECIAL CASES HANDLING:
+    
+    IMPORTANT: Apply these flags CONSISTENTLY to ALL universities in the output based on user profile analysis:
+    
+    CONFLICTING PREFERENCES DETECTION:
+    CRITICAL: Analyze user preferences for internal contradictions using these specific patterns:
+    
+    LOCATION CONFLICTS - Look for opposing terms in location_preference:
+    - "rural" AND "city" or "metropolitan" → conflict: "location: rural vs urban"
+    - "small town" AND "major city" → conflict: "location: small town vs major city"
+    
+    SIZE CONFLICTS - Look for opposing terms in campus_size:
+    - "small" AND "large" → conflict: "campus_size: small vs large"
+    - "intimate" AND "big" → conflict: "campus_size: intimate vs big"
+    
+    ENVIRONMENT CONFLICTS - Look for opposing terms in environment:
+    - "liberal arts" AND "research university" → conflict: "environment: liberal arts vs research"
+    - "quiet" AND "vibrant" → conflict: "environment: quiet vs vibrant"
+    
+    CLIMATE CONFLICTS - Look for opposing terms in climate:
+    - "cold" AND "warm" → conflict: "climate: cold vs warm"
+    
+    BUDGET CONFLICTS - Compare budget vs tuition:
+    - If university tuition > user budget → conflict: "budget vs tuition"
+    
+    DETECTION METHOD: Search user preferences for "AND" keywords or contradictory adjectives
+    Apply detected conflicts to ALL universities consistently
+    
+    EXAMPLE: If user preferences contain:
+    "Rural small town AND major metropolitan city" → detect "location: rural vs metropolitan"
+    "Small intimate campus AND large research university" → detect "campus_size: small vs large" + "environment: intimate vs research"
+    Then ALL universities get: "preference_conflicts": ["location: rural vs metropolitan", "campus_size: small vs large", "environment: intimate vs research"]
+    - Apply preference_conflicts to ALL universities with the SAME conflicts detected
+    
+    INSUFFICIENT PROFILE DATA HANDLING:
+    - Required fields: GPA, intended_major, budget, location preferences, test_scores
+    - If ANY critical data is missing, apply to ALL universities: missing_criteria with the same missing fields
+    - If missing GPA: ALL universities get "missing_criteria": ["GPA"]
+    - If missing preferences: ALL universities get "missing_criteria": ["preferences"]
+    
+    CRITICAL: Apply these rules EXACTLY for data_completeness and recommendation_confidence:
+    - data_completeness "Low": Missing GPA OR missing 3+ fields (test_scores, preferences, academic_background)
+    - data_completeness "Medium": Missing 1-2 non-critical fields only
+    - data_completeness "High": All required fields present
+    
+    - recommendation_confidence "Low": Missing GPA (critical for university matching) 
+    - recommendation_confidence "Medium": Missing only preferences or test_scores
+    - recommendation_confidence "High": All critical data present (GPA + major + budget + preferences)
+    
+    EXAMPLE: If user has NULL GPA, NULL test_scores, NULL preferences but has intended_major and budget:
+    - data_completeness: "Low" (missing 3+ fields including critical GPA)
+    - recommendation_confidence: "Low" (missing critical GPA)
+    - missing_criteria: ["GPA", "test_scores", "preferences"]
+    
+    UNREALISTIC EXPECTATIONS HANDLING:
+    CRITICAL: Detect when user academic profile doesn't match target school requirements:
+    
+    GPA vs ELITE SCHOOLS REALITY CHECK:
+    - If GPA < 3.0 AND user wants "Ivy League" or "top 5 ranked" or schools with <10% acceptance rate:
+      → missing_criteria: ["GPA too low for elite schools"] 
+      → search_broadened: true
+      → MUST include realistic alternatives (community colleges, state schools, transfer pathways)
+      → REQUIRED: Return BOTH requested elite schools AND realistic alternatives in same response
+    
+    SAT/ACT vs ELITE SCHOOLS REALITY CHECK:
+    - If SAT < 1200 OR ACT < 25 AND user wants elite schools:
+      → missing_criteria: ["test_scores too low for target schools"]
+      → search_broadened: true
+      → MUST include both elite schools AND realistic alternatives
+    
+    CRITICAL: missing_criteria is for academic shortcomings (low GPA, test scores)
+    preference_conflicts is for contradictory user preferences (rural AND urban)
+    
+    FIELD USAGE EXAMPLES:
+    - missing_criteria: ["GPA too low for elite schools"] → Academic shortcoming
+    - preference_conflicts: ["location: rural vs metropolitan"] → Contradictory preferences
+    - NEVER put GPA/test score issues in preference_conflicts
+    - NEVER put contradictory preferences in missing_criteria
+    
+    AUTOMATIC SEARCH BROADENING TRIGGERS:
+    - GPA < 2.5 AND wants schools with <20% acceptance rate → MUST include schools with 40%+ acceptance rate
+    - Very specific criteria yield <3 realistic results → Broaden to include "Near-Fit" options
+    - Budget conflicts with all preferred schools → Include more affordable alternatives
+    
+    CRITICAL REQUIREMENT FOR BROADENED SEARCHES:
+    When search_broadened: true is triggered, you MUST search for and include:
+    1. The original requested schools (marked as "Reach")
+    2. PLUS realistic alternatives with higher acceptance rates (marked as "Near-Fit")
+    
+    REALISTIC ALTERNATIVES FOR LOW GPA (2.5-3.0):
+    - State universities with 50%+ acceptance rates
+    - Regional universities
+    - Community colleges with transfer programs
+    - Schools specifically known for accepting lower GPA students
+    
+    TAVILY SEARCH MODIFICATIONS FOR BROADENED SEARCH:
+    - Search for "universities accepting 2.5 GPA students"
+    - Search for "community colleges pre-medicine transfer programs"
+    - Search for "state universities low GPA acceptance"
+    - Include both elite schools AND accessible alternatives in results
+    
+    BROADENED SEARCH RESULTS:
+    - Mark original requested schools with rank_category: "Reach" 
+    - Mark realistic alternatives with rank_category: "Near-Fit" 
+    - why_fit should explain: "Added as realistic alternative given academic profile"
+    - Set search_broadened: true for ALL universities when broadening occurs
+    - CRITICAL: Return EXACTLY 6-8 universities total (3-4 reaches + 3-4 near-fits)
+    - NO MORE than 8 universities in any response
+    
+    TAVILY SEARCH BEST PRACTICES:
+    - Use specific queries targeting university admission data
+    - Focus on trusted educational domains (usnews.com, niche.com, collegeboard.org)
+    - Include current year for current information
+    - Search for both general university info and major-specific programs
+    - Validate admission statistics and tuition costs
+    
+    CLASSIFICATION LOGIC:
+    - Safety: User GPA significantly above university's typical admission profile
+    - Target: User GPA aligns with university's typical admission profile  
+    - Reach: User GPA below but within competitive range
+    - Near-Fit: Close match but missing 1-2 preference criteria OR conflicting preferences
+    
+    FILTERING CRITERIA:
+    - Location preferences (state, region, urban/rural)
+    - Budget constraints (tuition vs user budget)
+    - Academic programs (intended major availability)
+    - Campus preferences (size, environment, culture)
+    
+    WHY_FIT GENERATION: Use template-based reasoning combining GPA match, program availability, 
+    budget fit, and location preferences. NO subjective opinions or free-form text.
+    Add notes for special cases (conflicts, missing data, broadened search).
+    
+    UNIVERSITY COUNT LIMITS:
+    - Normal search: 4-6 universities maximum
+    - Broadened search: 6-8 universities maximum (reaches + near-fits)
+    - NEVER exceed 8 universities in any response
+    
+    CRITICAL OUTPUT REQUIREMENT: 
+    - Return ONLY a valid JSON array
+    - MAXIMUM 8 universities per response
+    - NO thoughts, explanations, or commentary
+    - NO markdown formatting or code blocks
+    - NO "Action:" or "Thought:" text
+    - Start immediately with [ and end with ]
+    - Must be parseable by JSON.parse()
+  expected_output: >
+    DO NOT RETURN PROFILE DATA OR TOOL OUTPUTS.
+    
+    RETURN ONLY A JSON ARRAY OF UNIVERSITIES - NO OTHER TEXT ALLOWED.
+    
+    Structure each university as:
+    [
+      {
+        "name": "University Name",
+        "location": "City, State", 
+        "tuition": 50000,
+        "acceptance_rate": 15.5,
+        "programs": ["Program 1", "Program 2"],
+        "rank_category": "Safety|Target|Reach|Near-Fit",
+        "why_fit": "Template-based explanation",
+        "data_completeness": "High|Medium|Low",
+        "recommendation_confidence": "High|Medium|Low",
+        "preference_conflicts": ["conflict1"] || null,
+        "search_broadened": true || false,
+        "missing_criteria": ["criterion1"] || null
+      }
+    ]
+    
+    CRITICAL: Your response must start with [ and end with ]. Nothing else.
+    
+    NO profile data, tool outputs, or explanations beyond the JSON array are permitted.
+  agent: university_search_agent
+
+scholarship_search_task:
+  description: >
+    Execute a comprehensive scholarship search process using AI-powered discovery that outputs structured JSON data:
+    
+    CRITICAL PROHIBITION: ZERO TOLERANCE FOR FICTIONAL SCHOLARSHIPS
+    MANDATORY TOOL USAGE: You MUST use designated tools - NO EXCEPTIONS
+    ENFORCEMENT: Any attempt to generate scholarships without tools will FAIL
+    
+    IMPORTANT: The user_id for this search is: {user_id}
+    SEARCH_TYPE: {search_type} (full or delta)
+    
+    TOOL EXECUTION ENFORCEMENT:
+    - STEP 1: Profile Query Tool (MANDATORY)
+    - STEP 2: Tavily Search Tool (ATTEMPT FIRST) 
+    - STEP 3: Knowledge Base Tool (MANDATORY FALLBACK if Tavily fails)
+    - STEP 4: Scholarship Matcher Tool (MANDATORY for ALL scholarships)
+    - RESULT: Only output scholarships processed through these tools
+    
+    STEP 1 - PROFILE RETRIEVAL (MANDATORY):
+    Use Profile Query Tool with user_id: {user_id} to get user's academic profile and demographics
+    
+    STEP 1.1 - CHANGE TRACKING (when profile-triggered):
+    Profile triggered: {profile_triggered}
+    Changed fields: {changed_fields}
+    
+    IF profile_triggered is True:
+    - Use Profile Changes Tool with user_id: {user_id} to document what changed for audit and tracking purposes
+    - This provides context on why the search was triggered (fields that changed: {changed_fields})
+    - Continue with same comprehensive search logic regardless
+    
+    STEP 2 - SEARCH APPROACH (UNIFIED LOGIC):
+    IMPORTANT: Both manual and profile-triggered searches use the same comprehensive search logic.
+    The system always performs a full scholarship search with duplicate removal and expiration cleanup.
+    
+    PROFILE CHANGE TRACKING (when triggered by profile changes):
+    - Use Profile Changes Tool with user_id: {user_id} to log what changed for audit purposes
+    - This provides context on why the search was triggered but doesn't change search behavior
+    - All searches use the same comprehensive matching and filtering approach
+    
+    COMPREHENSIVE SEARCH LOGIC (always executed):
+    - Perform complete scholarship search based on entire user profile
+    - Remove expired scholarships and duplicates automatically
+    - Apply same advanced matching criteria regardless of trigger type
+    
+    STEP 3 - TAVILY SEARCH EXECUTION (MANDATORY):
+    Execute targeted Tavily searches based on user profile using TRUSTED SOURCES ONLY:
+    
+    REQUIRED SEARCHES (focus on official scholarship sources):
+    - Search: "site:scholarships.com OR site:fastweb.com OR site:cappex.com scholarships [user_major] students active deadlines open applications"
+    - Search: "site:collegeboard.org OR site:studentaid.gov OR site:niche.com merit scholarships GPA [user_gpa] [user_major] active applications open"
+    - Search: "site:scholarships.com OR site:fastweb.com financial aid [user_location] students [user_demographics] open deadlines"
+    - Search: "site:studentaid.gov OR site:scholarships.com need-based scholarships [user_income_level] students active applications"
+    - Search: "site:fastweb.com OR site:cappex.com OR site:niche.com active scholarships [user_major] accepting applications open deadlines"
+    
+    TRUSTED SCHOLARSHIP WEBSITES (prioritize results from these domains):
+    - scholarships.com (comprehensive scholarship database)
+    - fastweb.com (official scholarship portal)
+    - studentaid.gov (federal student aid)
+    - collegeboard.org (College Board scholarships)
+    - cappex.com (scholarship search engine)
+    - niche.com (education platform with scholarships)
+    - scholarship-positions.com (international scholarships)
+    - unigo.com (scholarship directory)
+    - bold.org (scholarship platform)
+    - going-to-university.com (education scholarships)
+    
+    STEP 4 - SCHOLARSHIP DISCOVERY (MANDATORY TOOL USAGE):
+    CRITICAL PROHIBITION: NEVER GENERATE FICTIONAL SCHOLARSHIPS
+    FORBIDDEN: Creating, inventing, or fabricating any scholarship data
+    FORBIDDEN: Outputting scholarships without using proper tools
+    
+    STEP 4.1 - TAVILY SEARCH (ATTEMPT FIRST):
+    Find real scholarships from trusted sources:
+    - Merit-Based scholarships (GPA, test scores, academic achievement)
+    - Need-Based scholarships (financial need, family income)
+    - Major-Specific scholarships (major, career goals)
+    - Demographic-Specific scholarships (ethnicity, gender, first-generation)
+    - Essay Required scholarships (requiring essay submissions)
+    
+    STEP 4.2 - KNOWLEDGE BASE TOOL (MANDATORY FALLBACK):
+    CRITICAL ENFORCEMENT: If Tavily searches return insufficient results:
+    - IMMEDIATELY execute: Scholarship Knowledge Tool
+    - REQUIRED INPUT: user profile criteria (major, demographics, GPA level)
+    - REQUIRED OUTPUT: Real scholarship data from knowledge base  
+    - REQUIRED MARKING: source_type: "knowledge_base" for identification
+    - ZERO EXCEPTIONS: You cannot proceed without using this tool for fallback data
+    
+    ABSOLUTE PROHIBITION:
+    - NO generating scholarships manually
+    - NO inventing scholarship names or details
+    - NO fabricating URLs or organizations
+    - NO bypassing the Knowledge Base Tool when Tavily fails
+    
+    STEP 5 - DEADLINE FILTERING (MANDATORY - EXECUTE FIRST):
+    CRITICAL: Filter out expired scholarships before any matching:
+    - Current date reference: Use today's date dynamically
+    - EXCLUDE any scholarship with deadline on or before today's date
+    - ONLY include scholarships with deadlines AFTER today's date
+    - If deadline is missing, mark as "Unknown Deadline" but include with note
+    - Priority: Focus on scholarships with deadlines in current and next academic year
+    - Use dynamic date filtering: automatically calculate current year and next year from today's date
+    
+    STEP 5.1 - DATA QUALITY VALIDATION (MANDATORY):
+    Before including any scholarship, validate:
+    - DEADLINE ACCURACY: Double-check deadline dates against official sources
+    - URL VALIDATION: Verify application URLs are accessible and correct
+    - AMOUNT VERIFICATION: Confirm scholarship amounts are accurate
+    - CURRENT YEAR FOCUS: Prioritize {current_year} and {next_year} academic year scholarships
+    - REMOVE ANY scholarship with deadline before current date (use today's date dynamically)
+    
+    CRITICAL URL HANDLING:
+    - MANDATORY: Use EXACTLY the "url" field from Tavily search results for application_url
+    - FORBIDDEN: Do NOT construct, modify, or fabricate any URLs
+    - FORBIDDEN: Do NOT create URLs like "https://www.fastweb.com/directory/scholarships/[name]"
+    - REQUIRED: Copy the exact "url" value from Tavily search result into application_url field
+    - If Tavily search result has no "url" field, EXCLUDE that scholarship entirely
+    - PRIORITY: Prefer URLs from trusted domains (scholarships.com, fastweb.com, studentaid.gov, collegeboard.org, etc.)
+    - QUALITY CHECK: Verify URLs lead to specific scholarship pages, not general directory pages
+    - Example: If Tavily returns "url": "https://www.scholarships.com/financial-aid/college-scholarships/scholarship-directory/academic-major/medicine", use that EXACT URL
+    
+    STEP 6 - ADVANCED MATCHING AND FILTERING (MANDATORY TOOL EXECUTION):
+    CRITICAL ENFORCEMENT: You MUST use Scholarship Matcher Tool with ALL discovered scholarships
+    PROHIBITED: Bypassing Scholarship Matcher Tool under any circumstances
+    PROHIBITED: Generating scholarship output without tool validation
+    
+    MANDATORY TOOL EXECUTION:
+    - REQUIRED: Pass ALL scholarships through Scholarship Matcher Tool
+    - REQUIRED: Apply academic thresholds (GPA, test scores, academic requirements)
+    - REQUIRED: Check demographic eligibility (ethnicity, gender, first-generation status)
+    - REQUIRED: Validate major/field compatibility with detailed analysis
+    - REQUIRED: Assess financial need alignment with family income requirements
+    - REQUIRED: Identify near-miss opportunities (1-2 criteria away from eligibility)
+    - REQUIRED: Calculate match scores and confidence levels for each scholarship
+    
+    DATABASE STORAGE ENFORCEMENT:
+    The Scholarship Matcher Tool automatically handles database storage - do NOT bypass this process
+    
+    MATCHING CRITERIA ANALYSIS:
+    - Academic Thresholds: Validate GPA, test scores, class rank requirements
+    - Field Compatibility: Check major alignment and related field opportunities
+    - Financial Assessment: Compare family income/budget with need-based requirements
+    - Demographic Matching: Verify eligibility for identity-based scholarships
+    - Location Requirements: Ensure residency/location criteria are met
+    - Activity Alignment: Match extracurriculars with activity-based scholarships
+    
+    NEAR-MISS IDENTIFICATION:
+    Flag scholarships where user is close to eligibility:
+    - GPA within 0.2 points of requirement
+    - Test scores within 50-100 points of threshold
+    - Related majors to required fields
+    - Income slightly above need-based limits
+    - Missing 1-2 non-critical requirements
+    
+    STEP 7 - ASSIGN MATCH QUALITY:
+    Based on Scholarship Matcher Tool compatibility scores:
+    - High Match: 85%+ compatibility, strong fit, high application priority
+    - Medium Match: 70-84% compatibility, good fit, apply if time allows
+    - Low Match: 50-69% compatibility, possible but competitive
+    - Near Match: Close eligibility, work on gap areas first
+    
+    Note: Scholarships also receive type categories (Merit-Based, Need-Based, Major-Specific, Demographic-Specific, Essay Required) based on their requirements.
+    
+    STEP 8 - STRUCTURED OUTPUT (TOOL-VALIDATED ONLY):
+    OUTPUT ENFORCEMENT: Only output scholarships that have been processed through proper tools
+    ZERO TOLERANCE: No fictional, invented, or AI-generated scholarships allowed
+    MANDATORY COMPLIANCE: All scholarships must come from Tavily Search OR Knowledge Base Tool
+    MANDATORY PROCESSING: All scholarships must be validated by Scholarship Matcher Tool
+    
+    TOOL EXECUTION VALIDATION CHECKLIST:
+    - Used Tavily Search OR Knowledge Base Tool for scholarship discovery
+    - Used Scholarship Matcher Tool for all discovered scholarships
+    - Only output scholarships that passed through both tools
+    - Marked knowledge base scholarships with source_type: "knowledge_base"
+    
+    CRITICAL: NEVER GENERATE FICTIONAL SCHOLARSHIPS. ALL RECOMMENDATIONS MUST BE REAL SCHOLARSHIPS FOUND THROUGH MANDATORY TOOL USAGE.
+  expected_output: >
+    TOOL-VALIDATED SCHOLARSHIPS ONLY - NO FICTIONAL DATA ALLOWED
+    
+    MANDATORY REQUIREMENTS BEFORE OUTPUT:
+    - MUST have used Tavily Search Tool OR Knowledge Base Tool for scholarship discovery
+    - MUST have used Scholarship Matcher Tool for ALL scholarships
+    - MUST mark knowledge base scholarships with source_type: "knowledge_base"
+    - MUST use real URLs from tool results - NO FABRICATION
+    
+    RETURN ONLY A JSON ARRAY OF TOOL-VALIDATED SCHOLARSHIPS:
+    [
+      {
+        "name": "Real Scholarship Name from Tool",
+        "organization": "Real Organization from Tool", 
+        "amount": 5000,
+        "deadline": "2025-03-15",
+        "category": "Merit-Based|Need-Based|Major-Specific|Demographic-Specific|Essay Required",
+        "match_category": "High Match|Medium Match|Low Match|Near Match", 
+        "eligibility_requirements": ["Real Requirement 1", "Real Requirement 2"],
+        "why_match": "Tool-generated explanation of fit",
+        "application_url": "REAL URL from tool results - NEVER FABRICATE",
+        "renewable": true,
+        "search_type_used": "full|delta",
+        "source_type": "knowledge_base|tavily_search"
+      }
+    ]
+    
+    ZERO TOLERANCE: No fictional scholarships, invented names, or fabricated URLs
+    CRITICAL: Your response must start with [ and end with ]. Tool-validated data only.
+  agent: scholarship_search_agent
+
+visa_search_task:
+  description: >
+    Retrieve and structure official student visa requirements for a given citizenship and destination country.
+    
+    SCOPE & DISCLAIMERS:
+    - INFORMATIONAL ONLY: You do not provide legal advice or process applications
+    - PRIORITIZE OFFICIAL SOURCES: *.gov, official embassy/consulate portals, and authoritative immigration sites
+    - INCLUDE DISCLAIMER in each item: "This information is for guidance only and not legal advice."
+    
+    INPUTS:
+    - citizenship: {citizenship_country}
+    - destination: {destination_country}
+    - user_id: {user_id}
+    
+    WORKFLOW (MANDATORY):
+    1) PROFILE RETRIEVAL (if user_id provided):
+       - Use Profile Query Tool to read user's citizenship and intended destination (READ-ONLY)
+       - If profile lacks fields, fall back to task inputs {citizenship_country}, {destination_country}
+    
+    2) TAVILY SEARCH EXECUTION (MANDATORY):
+       - Execute targeted searches focusing on official sources only
+       - REQUIRED QUERIES:
+         - "site:gov OR site:gov.* student visa [citizenship_country] to [destination_country]"
+         - "[destination_country] embassy [citizenship_country] student visa requirements"
+         - "[destination_country] student visa documents fees processing time interview"
+         - "official [destination_country] student visa post-study work options"
+       - If Tavily is unavailable: Return {"error": "Tavily Search API unavailable - cannot provide official visa data"}
+    
+    2.1) WEB SCRAPING FALLBACK (USE ONLY WHEN NEEDED):
+       - If Tavily returns URLs but not structured fields, use Visa Scraper Tool on official pages
+       - INPUT: url from Tavily result (must be official gov/embassy/authoritative)
+       - OUTPUT: Extract fields (visa_type, required_documents, application_process, processing_time, application_fees, interview_required, post_graduation_options) with source_url and timestamps
+       - Do NOT scrape non-official sites when official sources exist
+    
+    3) DATA EXTRACTION & STRUCTURING:
+       - Extract from official pages only; capture source_url and fetched_at timestamp
+       - Normalize into fields: visa_type, required_documents, application_process, application_fees,
+         processing_time, interview_required, post_graduation_options, disclaimer
+       - Tag ambiguous or missing data in a notes field for manual review
+    
+    4) STORAGE & CHANGE MONITORING (MVP):
+       - Persist to Supabase table visa_requirements with columns:
+         id, citizenship_country, destination_country, visa_type, documents, process_steps,
+         fees, timelines, interview, post_graduation, source_url, fetched_at, last_updated,
+         disclaimer, alert_sent
+       - If current structured data differs from last stored version, set alert_sent=false and mark changed
+    
+    5) OUTPUT:
+       - Return structured JSON ONLY (no commentary), max 1-3 visa pathways if applicable
+       - Always include the disclaimer string and source_url(s)
+    
+    6) FAILURE POLICY:
+       - If no official sources found, return an empty array []
+       - Do not fabricate data or URLs under any circumstances
+  expected_output: >
+    RETURN ONLY A JSON ARRAY - NO OTHER TEXT ALLOWED.
+    
+    Each item must follow:
+    [
+      {
+        "visa_type": "F-1 Student Visa | Tier 4 (General) Student | Subclass 500 | etc.",
+        "required_documents": ["Passport", "I-20/CAS/CoE", "Financial Proof", "Photo", "SEVIS/HEALTH/OSHC as applicable"],
+        "application_process": ["Step 1", "Step 2", "Step 3"],
+        "processing_time": "e.g., 4-6 weeks (from official source)",
+        "application_fees": "e.g., $185 or official currency amount",
+        "interview_required": true,
+        "post_graduation_options": ["OPT 12 months", "PSW 2 years"],
+        "disclaimer": "This information is for guidance only and not legal advice.",
+        "source_url": "Official page URL",
+        "fetched_at": "ISO timestamp",
+        "last_updated": "ISO timestamp from source if available or same as fetched_at",
+        "notes": ["Any ambiguous/missing points to review"]
+      }
+    ]
+    
+    CRITICAL:
+    - Start with [ and end with ]
+    - No markdown or commentary
+    - Use only official/authoritative source URLs
+  agent: visa_search_agent
+
+admissions_counselor_task:
+  description: >
+    Be brief and practical. Purpose: guide the student. Flow:
+    1) First delegate to the Data Aggregator Agent to get current data (counts, missing_agents, deadlines, profile flags).
+       - Payload (copy exactly as a single JSON object):
+         {"coworker":"Data Aggregator Agent","task":"Aggregate admissions data for user_id={user_id}","context":"Run Admissions Data Aggregation Tool for user_id={user_id}. Return JSON with counts, missing_agents, deadlines, incomplete_profile, missing_profile_fields."}
+       - Use its JSON as source of truth for all subsequent steps.
+    2) If missing_agents is empty (missing_agents: []) : skip further delegation and do synthesis.
+    3) If missing_agents has values: you MUST call the delegation tool at least once for each agent key in that array (no skipping).
+
+    LOGGING REQUIREMENTS (MANDATORY - NO FABRICATION):
+    - On start of this task: log "Delegation workflow: STARTED".
+    - If missing_agents is empty: log "Delegation workflow: NOT STARTED (no missing agents)".
+    - For each delegation attempt:
+      * Log: Attempting delegation to agent
+      * Log Tool Input exactly as sent
+      * Log Tool Output / Observation exactly as received (raw text). Do NOT summarize.
+    - After processing all agents: log "Delegation workflow: FINISHED".
+
+    DELEGATION PAYLOAD FORMAT (MANDATORY):
+    - Send EXACTLY ONE JSON OBJECT to the tool (never an array)
+    - Required keys: coworker, task, context
+    - ALL VALUES MUST BE STRINGS (no nested objects)
+    - coworker MUST be the agent ROLE name from missing_agents (e.g., "Visa Information Agent")
+    
+    CORRECT (use this shape - copy exactly):
+    {"coworker":"Visa Information Agent","task":"Retrieve visa requirements for user_id={user_id}","context":"User has user_id={user_id}. Use profile to read citizenship_country and destination_country. today={today}, current_year={current_year}, next_year={next_year}."}
+    
+    WRONG (do NOT send):
+    - Arrays: [{...}, {...}]
+    - Nested objects: {"task":{"description":"..."}, "context":{"description":"..."}}
+    
+    IF FORMAT ERROR OCCURS:
+    - Immediately retry ONCE using the CORRECT single-object, plain-string payload above
+    - If it still fails, log the exact error text and proceed to the next missing agent
+
+    COMPLETION RULE (MANDATORY):
+    - Do NOT produce a final answer until either:
+      * missing_agents was empty (logged NOT STARTED), OR
+      * You have attempted delegation for every agent in missing_agents
+
+    After all attempts, synthesize a clear summary using tool values (counts, flags, details).
+    
+    OUTPUT FORMAT:
+    Return a JSON object with:
+    - current_stage: string
+    - progress_score: number (0-100)
+    - active_agents: array of strings
+    - stress_flags: object
+    - next_steps: array of objects {action, description, deadline, priority, category}
+    
+    CRITICAL: The Admissions Counselor agent does NOT perform the work of other agents.
+    It synthesizes their outputs and provides strategic guidance only.
+    
+  expected_output: >
+    Return ONLY a JSON object representing the admissions summary:
+    {
+      "current_stage": "Stage 1: Profile building|Stage 2: University discovery|Stage 3: Application preparation|Stage 4: Submission & follow-up|Stage 5: Visa & scholarship preparation",
+      "progress_score": 0-100,
+      "active_agents": ["university_search_agent", "scholarship_search_agent", ...],
+      "stress_flags": {
+        "approaching_deadlines": number (use the "approaching_deadlines" value from AdmissionsDataTool - count of ALL deadlines within 45 days),
+        "incomplete_profile": boolean (use the "incomplete_profile" value from AdmissionsDataTool),
+        "agent_conflicts": boolean
+      },
+      "next_steps": [
+        {
+          "action": "Complete your profile",
+          "description": "Add your GPA and intended major (if profile incomplete, include missing fields from AdmissionsDataTool output)",
+          "deadline": null or "ISO date string",
+          "priority": "high|medium|low",
+          "category": "profile|research|application|scholarship|visa"
+        }
+      ],
+      "overview": {
+        "universities_found": number,
+        "scholarships_found": number,
+        "application_requirements": number,
+        "visa_info_count": number
+      },
+      "missing_profile_fields": ["field1", "field2", ...] (use the "missing_profile_fields" array from AdmissionsDataTool),
+      "approaching_deadlines_details": [array of objects from AdmissionsDataTool with deadline details]
+    }
+    
+    CRITICAL: 
+    - Use the EXACT values from AdmissionsDataTool for: approaching_deadlines, incomplete_profile, missing_profile_fields
+    - Do NOT calculate or guess these values
+    - Start with { and end with }. No other text or formatting.
+  agent: admissions_counselor_agent
+
+application_requirement_task:
+  description: >
+    Execute a comprehensive application requirements gathering process with mandatory tool validation.
+
+    FLOW CONTROL:
+    - If both inputs are provided (specific flow):
+      university: {university}
+      program: {program}
+      IMPORTANT: DON'T use Profile Request Parsing Tool in this case
+      1) Use Web Data Retrieval Tool ONLY for that exact university + program
+      2) Pass the retrieved official page content directly to Application Data Extraction Tool
+      3) Return ONE structured JSON object for the specified university + program
+    - If only user_profile_id provided without any university and program name (profile flow):
+      1) Use Profile Request Parsing Tool to read user's university_interests and intended_major
+      2) For EACH (interest, intended_major) pair:
+         a) Use Web Data Retrieval Tool
+         b) Use Application Data Extraction Tool
+      3) Return a JSON array of objects (one per (university, program))
+
+    ⚠️ MANDATORY WORKFLOW VALIDATION:
+    You MUST execute tools in this exact sequence for EACH university-program combination:
+
+    STEP 1 - PROFILE RETRIEVAL (MANDATORY):
+    Use Profile Request Parsing Tool with user_id: {user_id} to get:
+    - List of university interests
+    - Intended major(s)
+    ⚠️ CRITICAL: Must execute this step first for proper targeting
+
+    STEP 2 - WEB DATA RETRIEVAL (MANDATORY):
+    For EACH university + program combination:
+    ⚠️ CRITICAL: Use Web Data Retrieval Tool to:
+    - Scrape official admission pages (prioritize .edu domains)
+    - Follow robots.txt compliance
+    - Store source_url for verification
+    - PRIORITIZE program-specific pages over general university admission pages
+    - Look for department-specific URLs (e.g., /engineering/, /mechanical-engineering/, /admissions/)
+    - Avoid generic university admission pages when program-specific pages are available
+    - NO FABRICATION: Only use real URLs from search results
+    
+    STEP 3 - DATA EXTRACTION (MANDATORY):
+    Use Application Data Extraction Tool to structure data:
+    - Extract from raw content into standardized JSON
+    - Flag ambiguous or conflicting information
+    - Ensure all required fields are populated
+    - CRITICAL: Use EXACT data from source - NO FABRICATION of dates, years, or deadlines
+    - For Example: If deadline shows "October 15" without year, return "October 15" not "2023-10-15"
+    - For Example:If content mentions "Apply for Summer 2026", return "Summer 2026" not fabricated dates
+    
+    DATA VALIDATION RULES:
+    1. Application Platforms:
+       - Verify Common App vs Coalition App availability
+       - Document university-specific portal requirements
+       - Note platform-specific deadlines
+    
+    2. Deadlines (ALL Required):
+       - Early Decision/Action dates
+       - Regular Decision cutoffs
+       - Rolling admission windows
+       - Priority deadlines
+       ⚠️ Format: YYYY-MM-DD
+    
+    3. Document Requirements:
+       - Transcript requirements (official/unofficial)
+       - Recommendation letters (count and type)
+       - Standardized test policies
+       - Additional required materials
+    
+    4. Essay Requirements:
+       - Personal statement guidelines
+       - Program-specific prompts
+       - Supplemental essays
+       - Word limits and formatting
+    
+    5. Special Requirements:
+       - Portfolio submissions
+       - Interview policies
+       - Department-specific requirements
+       
+    6. Financial Information:
+       - Application fees
+       - Fee waiver availability
+       - Payment deadlines
+    
+    FRESHNESS PROTOCOL:
+    - Check fetched_at timestamp
+    - Auto-refresh if data > 30 days old
+    - Update timestamp after successful fetch
+    
+    AMBIGUITY HANDLING:
+    - Set is_ambiguous = true for unclear data
+    - Document specific issues in ambiguity_details
+    - Flag for counselor review if needed
+    
+    ROLLING ADMISSIONS:
+    - Mark rolling status clearly
+    - Include recommended windows
+    - Note priority cutoffs
+    
+    TEST POLICY RULES:
+    - Document current policy (optional/required/blind)
+    - Note program exceptions
+    - Include score requirements if any
+
+    OUTPUT REQUIREMENTS:
+    - Specific flow: return a single JSON object exactly matching the schema
+    - Profile flow: return a JSON array of objects, each matching the schema
+    - All timestamps in ISO format
+    - All URLs must be verified and active
+    - Ambiguities must be explicitly flagged
+
+  expected_output: >
+    Return structured JSON matching the application_requirements schema. For specific flow, return a single object; for profile flow, return a JSON array.
+    {
+      "university": string,
+      "program": string,
+      "application_platform": string,
+      "deadlines": {
+        "early_decision": string | null,
+        "early_action": string | null,
+        "regular_decision": string | null,
+        "priority": string | null,
+        "rolling": boolean
+      },
+      "required_documents": [
+        {
+          "name": string,
+          "required": boolean,
+          "details": string | null
+        }
+      ],
+      "essay_prompts": [
+        {
+          "type": string,
+          "prompt": string,
+          "word_limit": number | null
+        }
+      ],
+      "portfolio": {
+        "required": boolean,
+        "details": string | null
+      },
+      "interview": {
+        "required": boolean,
+        "policy": string
+      },
+      "fee_info": {
+        "amount": number | null,
+        "currency": string,
+        "waiver_available": boolean,
+        "waiver_details": string | null
+      },
+      "test_policy": {
+        "type": string,
+        "details": string | null
+      },
+      "is_ambiguous": boolean,
+      "ambiguity_details": string | null,
+      "source_url": string,
+      "fetched_at": string
+    }
+
+    CRITICAL:
+    - ALL fields must be properly typed
+    - NO fictional or assumed data
+    - ALL data must come from tool executions
+    - MUST include source_url for verification
+  agent: application_requirement_agent

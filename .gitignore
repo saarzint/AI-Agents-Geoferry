@@ -1,0 +1,11 @@
+.env
+.env.*
+.venv/
+logs/
+instance/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+*.pyd
+key.json
