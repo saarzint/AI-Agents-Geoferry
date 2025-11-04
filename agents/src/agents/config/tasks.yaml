@@ -519,8 +519,12 @@ admissions_counselor_task:
        - Payload (copy exactly as a single JSON object):
          {"coworker":"Data Aggregator Agent","task":"Aggregate admissions data for user_id={user_id}","context":"Run Admissions Data Aggregation Tool for user_id={user_id}. Return JSON with counts, missing_agents, deadlines, incomplete_profile, missing_profile_fields."}
        - Use its JSON as source of truth for all subsequent steps.
-    2) If missing_agents is empty (missing_agents: []) : skip further delegation and do synthesis.
+    2) CRITICAL DELEGATION RULES:
+       - ONLY delegate to agents that are listed in the missing_agents array from the Data Aggregator Agent's response.
+       - NEVER delegate to agents that are NOT in missing_agents (these agents already have data and are active).
+       - If missing_agents is empty (missing_agents: []) : skip further delegation and do synthesis.
     3) If missing_agents has values: you MUST call the delegation tool at least once for each agent key in that array (no skipping).
+       - Do NOT delegate to any agent that is NOT in missing_agents.
 
     LOGGING REQUIREMENTS (MANDATORY - NO FABRICATION):
     - On start of this task: log "Delegation workflow: STARTED".
@@ -559,9 +563,17 @@ admissions_counselor_task:
     Return a JSON object with:
     - current_stage: string
     - progress_score: number (0-100)
-    - active_agents: array of strings
+    - active_agents: array of strings (see ACTIVE_AGENTS RULES below)
     - stress_flags: object
     - next_steps: array of objects {action, description, deadline, priority, category}
+    
+    ACTIVE_AGENTS RULES (MANDATORY):
+    - active_agents should contain agent names that have data (i.e., agents NOT in missing_agents).
+    - Available agents: "University Search Agent", "Scholarship Search Agent", "Visa Information Agent", "Application Requirement Agent".
+    - DO NOT include "Data Aggregator Agent" in active_agents (it is an internal helper agent used only for initial data gathering).
+    - Example: If missing_agents=["Visa Information Agent"], then active_agents=["University Search Agent", "Scholarship Search Agent", "Application Requirement Agent"].
+    - Example: If missing_agents=["University Search Agent", "Application Requirement Agent"], then active_agents=["Scholarship Search Agent", "Visa Information Agent"].
+    - Example: If missing_agents=[], then active_agents=["University Search Agent", "Scholarship Search Agent", "Visa Information Agent", "Application Requirement Agent"].
     
     CRITICAL: The Admissions Counselor agent does NOT perform the work of other agents.
     It synthesizes their outputs and provides strategic guidance only.
@@ -571,7 +583,7 @@ admissions_counselor_task:
     {
       "current_stage": "Stage 1: Profile building|Stage 2: University discovery|Stage 3: Application preparation|Stage 4: Submission & follow-up|Stage 5: Visa & scholarship preparation",
       "progress_score": 0-100,
-      "active_agents": ["university_search_agent", "scholarship_search_agent", ...],
+      "active_agents": ["University Search Agent", "Scholarship Search Agent", ...],
       "stress_flags": {
         "approaching_deadlines": number (use the "approaching_deadlines" value from AdmissionsDataTool - count of ALL deadlines within 45 days),
         "incomplete_profile": boolean (use the "incomplete_profile" value from AdmissionsDataTool),

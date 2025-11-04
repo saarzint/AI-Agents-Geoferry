@@ -193,7 +193,7 @@ visa_search_agent:
 
 admissions_counselor_agent:
   role: >
-    Admissions Counselor Agent (Master Orchestrator)
+    Admissions Counselor Agent
   goal: >
     Guide the student by reading the aggregation result, delegating to missing agents, then summarizing.
   backstory: >

@@ -1449,6 +1449,18 @@ def register_routes(app: Flask) -> None:
 				print(agent_output)
 				print("=" * 60)
 				
+				# Store results from delegated agents
+				try:
+					from .manager_crew_storage import process_and_store_agent_results
+					storage_results = process_and_store_agent_results(user_id, result)
+					print(f"\n📊 Storage Results:")
+					print(f"  Application Requirements: {storage_results['application_requirement']['stored_count']} stored")
+					print(f"  Visa Information: {storage_results['visa_information']['stored_count']} stored")
+					print(f"  University Search: {storage_results['university_search']['stored_count']} stored")
+					print(f"  Scholarship Search: {storage_results['scholarship_search']['stored_count']} stored")
+				except Exception as storage_error:
+					print(f"⚠️ Failed to store agent results: {storage_error}")
+				
 				# Parse agent output
 				cleaned_output = agent_output.strip()
 				start_idx = cleaned_output.find('{')

@@ -257,6 +257,15 @@ class SearchCrew():
 class ManagerCrew():
     """AI Agents manager crew with hierarchical process"""
 
+    agents_config = 'config/agents.yaml'
+    tasks_config = 'config/tasks.yaml'
+    
+    def __init__(self):
+        """Initialize ManagerCrew and load agent configs from YAML"""
+        # Reuse SearchCrew's loaded config (it uses @CrewBase which auto-loads YAML)
+        search_crew = SearchCrew()
+        self.agents_config = search_crew.agents_config
+    
     def crew(self) -> Crew:
         """Creates the Manager crew with hierarchical process"""
         
@@ -270,11 +279,12 @@ class ManagerCrew():
             allow_delegation=False
         )
 
-        # Define university search agent
+        # Load university search agent from YAML config
+        university_config = self.agents_config['university_search_agent'].copy() # type: ignore[index]
+        if 'role' in university_config:
+            university_config['role'] = university_config['role'].strip()
         university_agent = Agent(
-            role="University Search Agent",
-            goal="Identify higher education institutions that align with a student's profile and preferences.",
-            backstory="Specialized university counseling agent with expertise in matching students to appropriate universities.",
+            config=university_config,
             tools=[
                 ProfileQueryTool(),
                 UniversityKnowledgeTool(),
@@ -290,11 +300,12 @@ class ManagerCrew():
             allow_delegation=False
         )
 
-        # Define scholarship search agent
+        # Load scholarship search agent from YAML config
+        scholarship_config = self.agents_config['scholarship_search_agent'].copy() # type: ignore[index]
+        if 'role' in scholarship_config:
+            scholarship_config['role'] = scholarship_config['role'].strip()
         scholarship_agent = Agent(
-            role="Scholarship Search Agent",
-            goal="Find relevant scholarships and financial aid opportunities that match a student's profile.",
-            backstory="Specialized scholarship discovery agent with expertise in matching students to financial aid opportunities.",
+            config=scholarship_config,
             tools=[
                 ProfileQueryTool(),
                 ProfileChangesTool(),
@@ -312,11 +323,12 @@ class ManagerCrew():
             allow_delegation=False
         )
 
-        # Define visa search agent
+        # Load visa search agent from YAML config
+        visa_config = self.agents_config['visa_search_agent'].copy() # type: ignore[index]
+        if 'role' in visa_config:
+            visa_config['role'] = visa_config['role'].strip()
         visa_agent = Agent(
-            role="Visa Information Agent",
-            goal="Retrieve, validate, and structure official student visa requirements.",
-            backstory="Specializes in gathering student visa information from official and authoritative sources.",
+            config=visa_config,
             tools=[
                 ProfileAccessTool(),
                 TavilySearchTool(
@@ -332,11 +344,12 @@ class ManagerCrew():
             allow_delegation=False
         )
 
-        # Define application requirement agent
+        # Load application requirement agent from YAML config
+        application_config = self.agents_config['application_requirement_agent'].copy() # type: ignore[index]
+        if 'role' in application_config:
+            application_config['role'] = application_config['role'].strip()
         application_agent = Agent(
-            role="Application Requirement Agent",
-            goal="Compile comprehensive application requirements and deadlines for university programs.",
-            backstory="Meticulous data-gathering specialist with expertise in university admissions requirements.",
+            config=application_config,
             tools=[
                 ProfileRequestParsingTool(),
                 WebDataRetrievalTool(),
@@ -360,13 +373,24 @@ class ManagerCrew():
         manager_task = Task(
             description=(
                 "Guide the student with user_id={user_id} through their admissions journey. "
+                "CRITICAL USER_ID RULE: The user_id passed to this task is {user_id}. You MUST use this EXACT user_id value (the numeric value, not the placeholder) when delegating to ALL other agents. "
                 "First delegate to the Data Aggregator Agent to get current data (counts, missing_agents, deadlines, profile flags) for user_id={user_id}. "
-                "Then delegate ONLY to agents listed in missing_agents - do NOT delegate to agents already present. "
-                "Finally synthesize a clear summary with current_stage, progress_score (numeric 0-100), active_agents, stress_flags, and next_steps."
+                "When delegating to any agent, ALWAYS include 'user_id={user_id}' in the context string, replacing {user_id} with the actual numeric value. "
+                "CRITICAL DELEGATION RULES: "
+                "- ONLY delegate to agents that are listed in the missing_agents array from the Data Aggregator Agent's response. "
+                "- NEVER delegate to agents that are NOT in missing_agents (these agents already have data and are active). "
+                "- If missing_agents is empty, skip all delegation and proceed directly to synthesis. "
+                "- When delegating, ALWAYS include the actual user_id value in the context (e.g., 'user_id=10' not 'user_id={user_id}'). "
+                "After delegation (or if missing_agents is empty), synthesize a clear summary with current_stage, progress_score (numeric 0-100), active_agents, stress_flags, and next_steps. "
+                "ACTIVE_AGENTS RULES: "
+                "- active_agents should contain agent names that have data (i.e., agents NOT in missing_agents). "
+                "- Available agents: 'University Search Agent', 'Scholarship Search Agent', 'Visa Information Agent', 'Application Requirement Agent'. "
+                "- DO NOT include 'Data Aggregator Agent' in active_agents (it is an internal helper agent). "
+                "- Example: If missing_agents=['Visa Information Agent'], then active_agents=['University Search Agent', 'Scholarship Search Agent', 'Application Requirement Agent']."
             ),
             expected_output=(
                 "Return a JSON object with: current_stage (string), progress_score (numeric 0-100, not a percentage string), "
-                "active_agents (array of strings), overview (string), missing_profile_fields (array of strings), "
+                "active_agents (array of strings - must exclude Data Aggregator Agent), overview (string), missing_profile_fields (array of strings), "
                 "approaching_deadlines_details (array of objects), next_steps (array of objects)"
             )
         )
