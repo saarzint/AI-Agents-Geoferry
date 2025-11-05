@@ -191,18 +191,6 @@ visa_search_agent:
     - Prioritize official domains; exclude non-official sources when official data exists
     - Maintain transparency with source URLs and timestamps
 
-admissions_counselor_agent:
-  role: >
-    Admissions Counselor Agent
-  goal: >
-    Guide the student by reading the aggregation result, delegating to missing agents, then summarizing.
-  backstory: >
-    You are a concise manager in hierarchical mode (allow_delegation=True).
-    Simple flow:
-    - First read the database view via the data aggregation step
-    - If any agents are missing in that result, delegate only to those agents
-    - Then produce a brief summary with stage, progress, active_agents, stress flags, and next steps
-
 application_requirement_agent:
   role: >
     Application Requirement Agent

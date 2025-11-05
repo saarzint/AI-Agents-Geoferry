@@ -9,5 +9,6 @@ from .profile_request_parsing_tool import ProfileRequestParsingTool
 from .web_data_retrieval_tool import WebDataRetrievalTool
 from .application_data_extraction_tool import ApplicationDataExtractionTool
 from .admissions_data_tool import AdmissionsDataTool
+from .stage_computation_tool import StageComputationTool
 
-__all__ = ['ProfileQueryTool', 'ProfileChangesTool', 'UniversityKnowledgeTool', 'ScholarshipMatcherTool', 'ScholarshipKnowledgeTool', 'ProfileAccessTool', 'VisaScraperTool', 'ProfileRequestParsingTool', 'WebDataRetrievalTool', 'ApplicationDataExtractionTool', 'AdmissionsDataTool']
+__all__ = ['ProfileQueryTool', 'ProfileChangesTool', 'UniversityKnowledgeTool', 'ScholarshipMatcherTool', 'ScholarshipKnowledgeTool', 'ProfileAccessTool', 'VisaScraperTool', 'ProfileRequestParsingTool', 'WebDataRetrievalTool', 'ApplicationDataExtractionTool', 'AdmissionsDataTool', 'StageComputationTool']

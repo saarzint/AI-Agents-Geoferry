@@ -3,7 +3,7 @@ from crewai.project import CrewBase, agent, crew, task
 from crewai.agents.agent_builder.base_agent import BaseAgent
 from crewai_tools import TavilySearchTool
 from typing import List
-from .tools import ProfileQueryTool, UniversityKnowledgeTool, ProfileChangesTool, ScholarshipMatcherTool, ScholarshipKnowledgeTool, ProfileRequestParsingTool, WebDataRetrievalTool, ApplicationDataExtractionTool, ProfileAccessTool, VisaScraperTool, AdmissionsDataTool
+from .tools import ProfileQueryTool, UniversityKnowledgeTool, ProfileChangesTool, ScholarshipMatcherTool, ScholarshipKnowledgeTool, ProfileRequestParsingTool, WebDataRetrievalTool, ApplicationDataExtractionTool, ProfileAccessTool, VisaScraperTool, AdmissionsDataTool, StageComputationTool
 
 # If you want to run a snippet of code before or after the crew starts,
 # you can use the @before_kickoff and @after_kickoff decorators
@@ -272,9 +272,19 @@ class ManagerCrew():
         # Define data aggregator agent
         data_aggregator = Agent(
             role="Data Aggregator Agent",
-            goal="Aggregate admissions data (universities, scholarships, requirements, visas) for synthesis.",
-            backstory="A focused data specialist that reads and summarizes cross-agent data for the manager.",
+            goal="Aggregate admissions data (universities, scholarships, requirements, visas) for synthesis by using the Admissions Data Aggregation Tool.",
+            backstory="A focused data specialist that reads and summarizes cross-agent data for the manager. When asked to aggregate data, you MUST use the Admissions Data Aggregation Tool with the provided user_id to get comprehensive admissions data including counts, missing agents, deadlines, and profile information. Always return the data as JSON format.",
             tools=[AdmissionsDataTool()],
+            verbose=True,
+            allow_delegation=False
+        )
+
+        # Define stage computation agent
+        stage_computation_agent = Agent(
+            role="Stage Computation Agent",
+            goal="Determine the current stage of a student's admissions journey by using the Stage Computation Tool.",
+            backstory="A specialist that analyzes user progress and determines which stage of the admissions journey they are in. When asked to compute the stage, you MUST use the Stage Computation Tool with the provided user_id to determine the current stage. Always return the stage information as JSON format with current_stage, stage_number, stage_description, and reasoning fields.",
+            tools=[StageComputationTool()],
             verbose=True,
             allow_delegation=False
         )
@@ -369,35 +379,62 @@ class ManagerCrew():
 
         )
 
+        # Define stage computation task
+        stage_computation_task = Task(
+            description=(
+                "Compute the current stage of the student's admissions journey for user_id={user_id}. "
+                "Use the Stage Computation Tool to determine which stage the student is in based on their profile completeness and progress. "
+                "The stages are: "
+                "1. Profile Building - Profile is incomplete "
+                "2. University Discovery - Profile complete, discovering universities "
+                "3. Application Preparation - Universities found, preparing applications "
+                "4. Submission & Follow-up - Applications prepared, submitting or following up "
+                "5. Visa & Scholarship Preparation - Applications submitted, focusing on visa and scholarships. "
+                "Return ONLY the stage information as JSON with current_stage, stage_number, stage_description, and reasoning fields."
+            ),
+            expected_output=(
+                'Return a JSON object with: current_stage (string - e.g., "Profile Building", "University Discovery", etc.), '
+                'stage_number (integer 1-5), stage_description (string), reasoning (string explaining why this stage)'
+            ),
+            agent=stage_computation_agent
+        )
+
         # Define the manager task
         manager_task = Task(
             description=(
                 "Guide the student with user_id={user_id} through their admissions journey. "
                 "CRITICAL USER_ID RULE: The user_id passed to this task is {user_id}. You MUST use this EXACT user_id value (the numeric value, not the placeholder) when delegating to ALL other agents. "
-                "First delegate to the Data Aggregator Agent to get current data (counts, missing_agents, deadlines, profile flags) for user_id={user_id}. "
+                "STEP 1 - GET CURRENT STAGE: First delegate to the Stage Computation Agent with this exact task: 'Use the Stage Computation Tool with user_id={user_id} to determine the current stage of the student's admissions journey. Return the stage information as JSON.' "
+                "Store the current_stage value from their response - you will use this in your final output. "
+                "STEP 2 - GET DATA AGGREGATION: Then delegate to the Data Aggregator Agent with this exact task: 'Use the Admissions Data Aggregation Tool with user_id={user_id} to get current data including counts (universities_found, scholarships_found, application_requirements, visa_info_count), missing_agents array, approaching_deadlines count, approaching_deadlines_details array, incomplete_profile boolean, and missing_profile_fields array. Return the data as JSON.' "
+                "CRITICAL: When delegating to Data Aggregator Agent, you MUST explicitly tell them to use the Admissions Data Aggregation Tool with user_id={user_id}. "
                 "When delegating to any agent, ALWAYS include 'user_id={user_id}' in the context string, replacing {user_id} with the actual numeric value. "
+                "STEP 3 - DELEGATE TO MISSING AGENTS: After getting the data aggregation results, check the missing_agents array. "
                 "CRITICAL DELEGATION RULES: "
                 "- ONLY delegate to agents that are listed in the missing_agents array from the Data Aggregator Agent's response. "
                 "- NEVER delegate to agents that are NOT in missing_agents (these agents already have data and are active). "
                 "- If missing_agents is empty, skip all delegation and proceed directly to synthesis. "
-                "- When delegating, ALWAYS include the actual user_id value in the context (e.g., 'user_id=10' not 'user_id={user_id}'). "
-                "After delegation (or if missing_agents is empty), synthesize a clear summary with current_stage, progress_score (numeric 0-100), active_agents, stress_flags, and next_steps. "
+                "- When delegating to missing agents, ALWAYS include the actual user_id value in the context (e.g., 'user_id=10' not 'user_id={user_id}'). "
+                "- For each missing agent, delegate with a clear task description and user_id={user_id}. "
+                "STEP 4 - SYNTHESIS: After delegation (or if missing_agents is empty), synthesize a clear summary. "
+                "CRITICAL: Use the current_stage from the Stage Computation Agent's response - DO NOT compute or guess the stage yourself. "
+                "Your output must include: current_stage (use the exact value from Stage Computation Agent), progress_score (numeric 0-100), active_agents, overview, missing_profile_fields, approaching_deadlines_details, and next_steps. "
                 "ACTIVE_AGENTS RULES: "
                 "- active_agents should contain agent names that have data (i.e., agents NOT in missing_agents). "
                 "- Available agents: 'University Search Agent', 'Scholarship Search Agent', 'Visa Information Agent', 'Application Requirement Agent'. "
-                "- DO NOT include 'Data Aggregator Agent' in active_agents (it is an internal helper agent). "
+                "- DO NOT include 'Data Aggregator Agent' or 'Stage Computation Agent' in active_agents (these are internal helper agents). "
                 "- Example: If missing_agents=['Visa Information Agent'], then active_agents=['University Search Agent', 'Scholarship Search Agent', 'Application Requirement Agent']."
             ),
             expected_output=(
-                "Return a JSON object with: current_stage (string), progress_score (numeric 0-100, not a percentage string), "
-                "active_agents (array of strings - must exclude Data Aggregator Agent), overview (string), missing_profile_fields (array of strings), "
+                "Return a JSON object with: current_stage (string - MUST use the value from Stage Computation Agent), progress_score (numeric 0-100, not a percentage string), "
+                "active_agents (array of strings - must exclude Data Aggregator Agent and Stage Computation Agent), overview (string), missing_profile_fields (array of strings), "
                 "approaching_deadlines_details (array of objects), next_steps (array of objects)"
             )
         )
 
         # Build and return the crew
         return Crew(
-            agents=[data_aggregator, university_agent, scholarship_agent, visa_agent, application_agent],
+            agents=[data_aggregator, stage_computation_agent, university_agent, scholarship_agent, visa_agent, application_agent],
             tasks=[manager_task],
             manager_agent=manager,
             process=Process.hierarchical,
