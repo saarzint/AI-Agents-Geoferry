@@ -45,7 +45,8 @@ class SearchCrew():
                     include_domains=[
                         "usnews.com", "niche.com", "collegeboard.org", 
                         "petersons.com", "princetonreview.com", "cappex.com"
-                    ]
+                    ],
+                    max_tokens=10000,
                 )
             ],
             verbose=True,
@@ -73,7 +74,8 @@ class SearchCrew():
                     include_domains=[
                         "fastweb.com", "scholarships.com", "collegeboard.org", 
                         "cappex.com", "niche.com", "petersons.com"
-                    ]
+                    ],
+                    max_tokens=10000,
                 )
             ],
             verbose=True,
@@ -99,7 +101,8 @@ class SearchCrew():
                     include_domains=[
                         "usembassy.gov", "state.gov", "gov.uk", "immigration.gov.au", "canada.ca/ircc",
                         "uk.embassy.gov.au", "uk.gov.au", "uk.gov.uk", "uk.gov.uk/immigration", "uk.gov.uk/visa", "uk.gov.uk/visa/student", "uk.gov.uk/visa/student/requirements", "uk.gov.uk/visa/student/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/",
-                    ]
+                    ],
+                    max_tokens=10000,
                 ),
                 VisaScraperTool(),
             ],
@@ -185,6 +188,31 @@ class SearchCrew():
             allow_delegation=False
         )
 
+    @agent
+    def next_steps_generator_agent(self) -> Agent:
+        """
+        Next Steps Generator Agent - Specialist
+        Generates actionable, prioritized next steps for students based on their current admissions journey stage and progress.
+        """
+        return Agent(
+            role="Next Steps Generator Agent",
+            goal="Generate actionable, prioritized next steps for students based on their current admissions journey stage and progress.",
+            backstory=(
+                "You are a strategic planning specialist with expertise in admissions counseling. "
+                "You analyze the student's current stage, deadlines, profile completeness, and agent outputs "
+                "to generate specific, actionable next steps. Each step you create includes priority level, "
+                "calculated due dates, and references to the appropriate agent that should handle the task. "
+                "You use rule-based logic combined with LLM reasoning to ensure steps are realistic, timely, "
+                "and aligned with the student's goals and deadlines. "
+                "CRITICAL: You MUST return ONLY a valid JSON array - no markdown, no code blocks, no explanations outside the JSON. "
+                "Start your response immediately with [ and end with ]. "
+                "Each object in the array must have: action, priority, due_date, related_agent, and reasoning fields."
+            ),
+            tools=[AdmissionsDataTool(), ProfileQueryTool(), StageComputationTool()],
+            verbose=True,
+            allow_delegation=False  # Specialist agent - generates steps, doesn't delegate
+        )
+
     # To learn more about structured task outputs,
     # task dependencies, and task callbacks, check out the documentation:
     # https://docs.crewai.com/concepts/tasks#overview-of-a-task
@@ -242,6 +270,36 @@ class SearchCrew():
                 '"incomplete_profile":boolean,"missing_profile_fields":["..."]}'
             ),
             agent=self.data_aggregator_agent()
+        )
+
+    @task
+    def next_steps_generator_task(self) -> Task:
+        """Generates detailed, actionable next steps for a user based on their current admissions journey."""
+        return Task(
+            description=(
+                "Generate detailed, actionable next steps for user_id={user_id} based on their current admissions journey. "
+                "STEP 1 - GET CURRENT STAGE: Use the Stage Computation Tool with user_id={user_id} to determine the current stage. "
+                "STEP 2 - GET DATA AGGREGATION: Use the Admissions Data Aggregation Tool with user_id={user_id} to get: "
+                "approaching_deadlines_details (deadlines within 45 days), missing_profile_fields, and current progress. "
+                "STEP 3 - GENERATE ACTIONABLE NEXT STEPS: Create 3-5 specific, actionable next steps. "
+                "Each next step MUST include: "
+                "- action: A clear, specific action description "
+                "- priority: 'High', 'Medium', or 'Low' based on urgency (High for deadlines within 14 days, Medium for 30 days, Low for beyond) "
+                "- due_date: Calculated date (YYYY-MM-DD format) - set 7-10 days before actual deadlines, 3-7 days for urgent profile fields "
+                "- related_agent: Reference to the agent (e.g., 'Application Requirement Agent', 'Scholarship Search Agent', 'University Search Agent', 'Visa Information Agent', or 'Profile Update') "
+                "- reasoning: Brief explanation of why this step is needed and when it should be completed "
+                "Order steps by priority (High first) and then by due_date (earliest first). "
+                "Return ONLY a valid JSON array starting with [ and ending with ]."
+            ),
+            expected_output=(
+                "Return a JSON array of next steps objects. Each object must have: "
+                '{"action": "Clear, specific action description", "priority": "High|Medium|Low", '
+                '"due_date": "YYYY-MM-DD", "related_agent": "Agent name or Profile Update", '
+                '"reasoning": "Brief explanation of why and when"}. '
+                "Minimum 3 next steps, maximum 5 next steps. "
+                "Start with [ and end with ]. No markdown, no code blocks."
+            ),
+            agent=self.next_steps_generator_agent()
         )
 
     @crew
@@ -416,25 +474,62 @@ class ManagerCrew():
                 "- If missing_agents is empty, skip all delegation and proceed directly to synthesis. "
                 "- When delegating to missing agents, ALWAYS include the actual user_id value in the context (e.g., 'user_id=10' not 'user_id={user_id}'). "
                 "- For each missing agent, delegate with a clear task description and user_id={user_id}. "
-                "STEP 4 - SYNTHESIS: After delegation (or if missing_agents is empty), synthesize a clear summary. "
+                "STEP 4 - GENERATE DETAILED NEXT STEPS: After delegation (or if missing_agents is empty), delegate to the Next Steps Generator Agent to create detailed, actionable next steps. "
+                "Delegate with this exact task: 'Generate detailed, actionable next steps for user_id={user_id} based on the current stage, approaching deadlines, and student progress. "
+                "You MUST return ONLY a valid JSON array (no markdown, no code blocks, no explanations). Start with [ and end with ]. "
+                "Each object must have: action (string), priority (High/Medium/Low), due_date (YYYY-MM-DD), related_agent (string), and reasoning (string). "
+                "Current stage: [use the current_stage from Stage Computation Agent]. "
+                "Approaching deadlines: [use the approaching_deadlines_details from Data Aggregator Agent]. "
+                "Active agents: [list active agents]. "
+                "Missing profile fields: [list missing_profile_fields]. "
+                "Priority rules: High for deadlines within 14 days, Medium for 30 days, Low for beyond 30 days. "
+                "Due date rules: Set 7-10 days before actual deadlines, 3-7 days for urgent profile fields, 14 days for less urgent. "
+                "Related agent mapping: University tasks → University Search Agent, Scholarship tasks → Scholarship Search Agent, "
+                "Application/essay tasks → Application Requirement Agent, Visa tasks → Visa Information Agent, Profile tasks → Profile Update. "
+                "Return 3-5 next steps, ordered by priority (High first) then by due_date (earliest first).' "
+                "CRITICAL: The Next Steps Generator Agent's response should be a JSON array. If it includes markdown or extra text, extract only the JSON array portion. "
+                "Store the next_steps array from their response - you will use this in your final output. "
+                ""
+                "STEP 5 - SYNTHESIS: Synthesize a clear summary incorporating the detailed next steps from the Next Steps Generator Agent. "
                 "CRITICAL: Use the current_stage from the Stage Computation Agent's response - DO NOT compute or guess the stage yourself. "
-                "Your output must include: current_stage (use the exact value from Stage Computation Agent), progress_score (numeric 0-100), active_agents, overview, missing_profile_fields, approaching_deadlines_details, and next_steps. "
+                "CRITICAL: Use the next_steps array from the Next Steps Generator Agent's response - DO NOT generate next steps yourself. "
+                "Your output must include: current_stage (use the exact value from Stage Computation Agent), progress_score (numeric 0-100), active_agents, overview, missing_profile_fields, approaching_deadlines_details, and next_steps (use the exact array from Next Steps Generator Agent). "
                 "ACTIVE_AGENTS RULES: "
                 "- active_agents should contain agent names that have data (i.e., agents NOT in missing_agents). "
                 "- Available agents: 'University Search Agent', 'Scholarship Search Agent', 'Visa Information Agent', 'Application Requirement Agent'. "
-                "- DO NOT include 'Data Aggregator Agent' or 'Stage Computation Agent' in active_agents (these are internal helper agents). "
+                "- DO NOT include 'Data Aggregator Agent', 'Stage Computation Agent', or 'Next Steps Generator Agent' in active_agents (these are internal helper agents). "
                 "- Example: If missing_agents=['Visa Information Agent'], then active_agents=['University Search Agent', 'Scholarship Search Agent', 'Application Requirement Agent']."
             ),
             expected_output=(
                 "Return a JSON object with: current_stage (string - MUST use the value from Stage Computation Agent), progress_score (numeric 0-100, not a percentage string), "
-                "active_agents (array of strings - must exclude Data Aggregator Agent and Stage Computation Agent), overview (string), missing_profile_fields (array of strings), "
-                "approaching_deadlines_details (array of objects), next_steps (array of objects)"
+                "active_agents (array of strings - must exclude Data Aggregator Agent, Stage Computation Agent, and Next Steps Generator Agent), overview (string), missing_profile_fields (array of strings), "
+                "approaching_deadlines_details (array of objects), next_steps (array of objects - MUST use the exact array from Next Steps Generator Agent, each with action, priority, due_date, related_agent, and reasoning)"
             )
+        )
+
+        # Define Next Steps Generator agent (Lead + Dev)
+        next_steps_generator_agent = Agent(
+            role="Next Steps Generator Agent",
+            goal="Generate actionable, prioritized next steps for students based on their current admissions journey stage and progress.",
+            backstory=(
+                "You are a strategic planning specialist with expertise in admissions counseling. "
+                "You analyze the student's current stage, deadlines, profile completeness, and agent outputs "
+                "to generate specific, actionable next steps. Each step you create includes priority level, "
+                "calculated due dates, and references to the appropriate agent that should handle the task. "
+                "You use rule-based logic combined with LLM reasoning to ensure steps are realistic, timely, "
+                "and aligned with the student's goals and deadlines. "
+                "CRITICAL: You MUST return ONLY a valid JSON array - no markdown, no code blocks, no explanations outside the JSON. "
+                "Start your response immediately with [ and end with ]. "
+                "Each object in the array must have: action, priority, due_date, related_agent, and reasoning fields."
+            ),
+            tools=[AdmissionsDataTool(), ProfileQueryTool()],  # Access to data for generating informed next steps
+            verbose=True,
+            allow_delegation=False  # Specialist agent - generates steps, doesn't delegate
         )
 
         # Build and return the crew
         return Crew(
-            agents=[data_aggregator, stage_computation_agent, university_agent, scholarship_agent, visa_agent, application_agent],
+            agents=[data_aggregator, stage_computation_agent, university_agent, scholarship_agent, visa_agent, application_agent, next_steps_generator_agent],
             tasks=[manager_task],
             manager_agent=manager,
             process=Process.hierarchical,

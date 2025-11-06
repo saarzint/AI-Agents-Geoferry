@@ -54,7 +54,7 @@ class StageComputationTool(BaseTool):
             
             # Get profile data
             profile_resp = supabase.table("user_profile").select(
-                "gpa,intended_major,budget,citizenship_country,destination_country,test_scores,academic_background,preferences"
+                "full_name,gpa,intended_major,budget,citizenship_country,destination_country,test_scores,academic_background,preferences,university_interests"
             ).eq("id", user_id).execute()
             
             # Get counts of various data
@@ -63,22 +63,43 @@ class StageComputationTool(BaseTool):
             app_reqs_resp = supabase.table("application_requirements").select("id").eq("user_profile_id", user_id).execute()
             visa_resp = supabase.table("visa_requirements").select("id").eq("user_profile_id", user_id).execute()
             
-            # Check profile completeness
+            # Check profile completeness and capture missing fields
             profile_complete = False
+            missing_fields: list[str] = []
             if profile_resp.data:
                 prof = profile_resp.data[0]
-                required_fields = [
-                    prof.get("gpa"),
-                    prof.get("intended_major"),
-                    prof.get("budget"),
-                    prof.get("citizenship_country"),
-                    prof.get("destination_country")
+                critical_field_keys = [
+                    "full_name",
+                    "gpa",
+                    "intended_major",
+                    "budget",
+                    "citizenship_country",
+                    "destination_country",
+                    "preferences",
+                    "university_interests",
+                    "test_scores",
+                    "academic_background",
                 ]
-                # Profile is complete if all critical fields are present
-                profile_complete = all(
-                    field is not None and (not isinstance(field, str) or str(field).strip() != "")
-                    for field in required_fields
-                )
+                friendly_names = {
+                    "full_name": "Full name",
+                    "gpa": "GPA",
+                    "intended_major": "Intended major",
+                    "budget": "Budget",
+                    "citizenship_country": "Citizenship country",
+                    "destination_country": "Destination country",
+                    "preferences": "Preferences",
+                    "university_interests": "University interests",
+                    "test_scores": "Test scores",
+                    "academic_background": "Academic background",
+                }
+                def _is_missing(value: Any) -> bool:
+                    return value is None or (isinstance(value, str) and str(value).strip() == "")
+                missing_fields = [
+                    friendly_names.get(key, key)
+                    for key in critical_field_keys
+                    if _is_missing(prof.get(key))
+                ]
+                profile_complete = len(missing_fields) == 0
             
             universities_count = len(universities_resp.data) if universities_resp.data else 0
             scholarships_count = len(scholarships_resp.data) if scholarships_resp.data else 0
@@ -123,7 +144,8 @@ class StageComputationTool(BaseTool):
                 app_reqs_count=app_reqs_count,
                 approaching_deadlines=approaching_deadlines,
                 scholarships_count=scholarships_count,
-                visa_count=visa_count
+                visa_count=visa_count,
+                missing_fields=missing_fields
             )
             
             return json.dumps({
@@ -143,7 +165,8 @@ class StageComputationTool(BaseTool):
         app_reqs_count: int,
         approaching_deadlines: int,
         scholarships_count: int,
-        visa_count: int
+        visa_count: int,
+        missing_fields: list[str]
     ) -> Dict[str, Any]:
         """
         Compute the current stage based on user progress.
@@ -160,8 +183,14 @@ class StageComputationTool(BaseTool):
             return {
                 "number": 1,
                 "name": "Profile Building",
-                "description": "The student is building their profile. They need to complete their profile with essential information like GPA, intended major, budget, citizenship, and destination country.",
-                "reasoning": "Profile is incomplete - missing critical fields"
+                "description": (
+                    "The student is building their profile. They need to complete their profile with essential information. "
+                    + (f"Missing fields: {', '.join(missing_fields)}" if missing_fields else "")
+                ),
+                "reasoning": (
+                    "Profile is incomplete - missing critical fields"
+                    + (f": {', '.join(missing_fields)}" if missing_fields else "")
+                )
             }
         
         # Stage 2: University discovery
@@ -182,32 +211,23 @@ class StageComputationTool(BaseTool):
                 "reasoning": f"Universities found ({universities_count}) but no application requirements gathered yet"
             }
         
-        # Stage 4: Submission & follow-up
-        if approaching_deadlines > 0 or app_reqs_count > 0:
-            # Check if they're actively preparing for submissions
-            if approaching_deadlines > 0:
-                return {
-                    "number": 4,
-                    "name": "Submission & Follow-up",
-                    "description": "The student has prepared applications and is now submitting them or following up on approaching deadlines.",
-                    "reasoning": f"Application requirements gathered ({app_reqs_count}) with {approaching_deadlines} approaching deadlines"
-                }
-            else:
-                return {
-                    "number": 4,
-                    "name": "Submission & Follow-up",
-                    "description": "The student has prepared applications and is in the process of submitting them or waiting for responses.",
-                    "reasoning": f"Application requirements gathered ({app_reqs_count}) but no urgent deadlines yet"
-                }
-        
+        # Stage 4: Submission & follow-up (prioritize only when deadlines are approaching)
+        if approaching_deadlines > 0:
+            return {
+                "number": 4,
+                "name": "Submission & Follow-up",
+                "description": "The student has prepared applications and is now submitting them or following up on approaching deadlines.",
+                "reasoning": f"Application requirements gathered ({app_reqs_count}) with {approaching_deadlines} approaching deadlines"
+            }
+
         # Stage 5: Visa & scholarship preparation
-        # This stage is reached when applications are mostly done and focus shifts to visa/scholarships
+        # Reached when application prep exists and focus shifts to visa/scholarships without urgent submission deadlines
         if app_reqs_count > 0 and (scholarships_count > 0 or visa_count > 0):
             return {
                 "number": 5,
                 "name": "Visa & Scholarship Preparation",
-                "description": "The student has submitted applications and is now focusing on visa requirements and scholarship opportunities.",
-                "reasoning": f"Applications prepared ({app_reqs_count}), with scholarships ({scholarships_count}) and/or visa info ({visa_count}) being prioritized"
+                "description": "The student has submitted or largely completed applications and is now focusing on visa requirements and scholarship opportunities.",
+                "reasoning": f"Applications prepared ({app_reqs_count}), with scholarships ({scholarships_count}) and/or visa info ({visa_count}); no urgent deadlines"
             }
         
         # Fallback: Default to Stage 3 if we have universities but unclear progression

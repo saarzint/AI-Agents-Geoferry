@@ -5,7 +5,7 @@ This module handles incoming agent data and orchestrates updates to the admissio
 
 from datetime import datetime
 from typing import Dict, Any, Optional
-from supabase_client import get_supabase
+from .supabase_client import get_supabase
 
 
 class AgentEventHandler:

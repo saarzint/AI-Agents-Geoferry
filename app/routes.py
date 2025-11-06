@@ -1449,18 +1449,6 @@ def register_routes(app: Flask) -> None:
 				print(agent_output)
 				print("=" * 60)
 				
-				# # Store results from delegated agents
-				# try:
-				# 	from .manager_crew_storage import process_and_store_agent_results
-				# 	storage_results = process_and_store_agent_results(user_id, result)
-				# 	print(f"\n📊 Storage Results:")
-				# 	print(f"  Application Requirements: {storage_results['application_requirement']['stored_count']} stored")
-				# 	print(f"  Visa Information: {storage_results['visa_information']['stored_count']} stored")
-				# 	print(f"  University Search: {storage_results['university_search']['stored_count']} stored")
-				# 	print(f"  Scholarship Search: {storage_results['scholarship_search']['stored_count']} stored")
-				# except Exception as storage_error:
-				# 	print(f"⚠️ Failed to store agent results: {storage_error}")
-				
 				# Parse agent output
 				cleaned_output = agent_output.strip()
 				start_idx = cleaned_output.find('{')
@@ -1559,7 +1547,8 @@ def register_routes(app: Flask) -> None:
 	@app.get("/admissions/next_steps/<int:user_id>")
 	def admissions_next_steps(user_id: int):
 		"""
-		Get prioritized next actions for a user based on their current stage and progress.
+		Get prioritized next actions for a user using the Next Steps Generator Agent.
+		Updates the admissions_summary table with the generated next steps.
 		
 		GET /admissions/next_steps/{user_id}
 		"""
@@ -1571,126 +1560,82 @@ def register_routes(app: Flask) -> None:
 			
 			supabase = get_supabase()
 			
-			# Get current summary to understand stage
+			# Execute Next Steps Generator Agent using SearchCrew
+			try:
+				from agents.crew import SearchCrew
+				from crewai import Crew, Process
+				
+				# Create SearchCrew instance
+				search_crew_instance = SearchCrew()
+				
+				# Get the next_steps_generator_agent and next_steps_generator_task
+				next_steps_agent = search_crew_instance.next_steps_generator_agent()
+				next_steps_task = search_crew_instance.next_steps_generator_task()
+				
+				# Create crew with just the Next Steps Generator Agent and Task
+				next_steps_crew = Crew(
+					agents=[next_steps_agent],
+					tasks=[next_steps_task],
+					process=Process.sequential,
+					verbose=True
+				)
+				
+				inputs = {
+					'user_id': user_id,
+					'current_year': str(datetime.now().year),
+					'next_year': str(datetime.now().year + 1),
+					'today': datetime.now().date().isoformat()
+				}
+				
+				print(f"\n=== GENERATING NEXT STEPS - User ID: {user_id} ===")
+				result = next_steps_crew.kickoff(inputs=inputs)
+				agent_output = result.raw if hasattr(result, 'raw') else str(result)
+				
+				print(f"\nNEXT STEPS GENERATOR OUTPUT:")
+				print("=" * 60)
+				print(agent_output)
+				print("=" * 60)
+				
+				# Parse agent output - extract JSON array
+				cleaned_output = agent_output.strip()
+				start_idx = cleaned_output.find('[')
+				end_idx = cleaned_output.rfind(']')
+				
+				if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+					json_content = cleaned_output[start_idx:end_idx + 1]
+					try:
+						next_steps = json.loads(json_content)
+						print(f"✅ Parsed next steps successfully: {len(next_steps)} steps")
+					except json.JSONDecodeError as e:
+						print(f"⚠️ Could not parse agent output as JSON: {e}")
+						next_steps = []
+				else:
+					print(f"⚠️ No JSON array found in agent output")
+					next_steps = []
+					
+			except ImportError:
+				print("⚠️ CrewAI agents not available, falling back to empty next steps")
+				next_steps = []
+			except Exception as e:
+				print(f"⚠️ Next Steps Generator Agent execution failed: {e}")
+				next_steps = []
+			
+			# Update admissions_summary table with generated next steps
 			summary_resp = supabase.table("admissions_summary").select("*").eq("user_id", user_id).order("last_updated", desc=True).limit(1).execute()
 			
-			# Get user profile
-			profile_resp = supabase.table("user_profile").select("full_name, gpa, intended_major, budget, citizenship_country, destination_country").eq("id", user_id).execute()
-			profile = profile_resp.data[0] if profile_resp.data else {}
-			
-			# Generate next steps based on current state
-			next_steps = []
-			
-			# Check if profile is complete and list missing fields
-			missing_fields = []
-			if not profile.get("gpa"):
-				missing_fields.append("GPA")
-			if not profile.get("intended_major") or str(profile.get("intended_major")).strip() == "":
-				missing_fields.append("Intended Major")
-			if profile.get("budget") is None:
-				missing_fields.append("Budget")
-			if not profile.get("citizenship_country"):
-				missing_fields.append("Citizenship Country")
-			if not profile.get("destination_country"):
-				missing_fields.append("Destination Country")
-			if not profile.get("test_scores"):
-				missing_fields.append("Test Scores")
-			if not profile.get("academic_background"):
-				missing_fields.append("Academic Background")
-			if not profile.get("preferences"):
-				missing_fields.append("Preferences")
-			
-			if missing_fields:
-				next_steps.append({
-					"priority": "high",
-					"action": "Complete your profile",
-					"description": f"Add or update the following: {', '.join(missing_fields)}",
-					"deadline": None,
-					"category": "profile"
-				})
-			
-			# Check university results
-			universities_resp = supabase.table("university_results").select("id").eq("user_profile_id", user_id).execute()
-			if not universities_resp.data:
-				next_steps.append({
-					"priority": "high",
-					"action": "Search for universities",
-					"description": "Start exploring universities that match your profile",
-					"deadline": None,
-					"category": "research"
-				})
-			elif len(universities_resp.data) < 3:
-				next_steps.append({
-					"priority": "medium",
-					"action": "Expand your college list",
-					"description": "Consider adding more universities to have a balanced list of safety, target, and reach schools",
-					"deadline": None,
-					"category": "research"
-				})
-			
-			# Check for approaching application deadlines
-			app_reqs_resp = supabase.table("application_requirements").select("university, program, deadlines").eq("user_profile_id", user_id).execute()
-			urgent_steps = []
-			for req in app_reqs_resp.data or []:
-				deadlines = req.get("deadlines", {})
-				if isinstance(deadlines, dict):
-					for key, date_str in deadlines.items():
-						try:
-							deadline_date = datetime.fromisoformat(date_str).date()
-							days_left = (deadline_date - datetime.now().date()).days
-							if 0 <= days_left <= 45:
-								urgent_steps.append({
-									"priority": "high",
-									"action": f"Prepare {req.get('university', 'application')} application",
-									"description": f"{req.get('program', 'Program')} deadline in {days_left} days",
-									"deadline": date_str,
-									"category": "application",
-									"university": req.get("university"),
-									"program": req.get("program")
-								})
-						except (ValueError, TypeError, AttributeError):
-							pass
-			
-			# Add urgent steps sorted by deadline
-			next_steps.extend(sorted(urgent_steps, key=lambda x: x.get("deadline", "")))
-			
-			# Check for scholarship deadlines
-			scholarships_resp = supabase.table("scholarship_results").select("name, deadline, award_amount").eq("user_profile_id", user_id).gte("deadline", datetime.now().date().isoformat()).order("deadline", desc=False).execute()
-			for scholarship in scholarships_resp.data or []:
-				try:
-					deadline_str = scholarship.get("deadline")
-					deadline_date = datetime.fromisoformat(deadline_str).date()
-					days_left = (deadline_date - datetime.now().date()).days
-					if days_left <= 30:
-						next_steps.append({
-							"priority": "medium",
-							"action": f"Apply for {scholarship.get('name', 'scholarship')}",
-							"description": f"Deadline in {days_left} days - Award: {scholarship.get('award_amount', 'Amount varies')}",
-							"deadline": deadline_str,
-							"category": "scholarship"
-						})
-				except (ValueError, TypeError, AttributeError):
-					pass
-			
-			# If no urgent items, suggest general next steps
-			if not next_steps:
-				# Check if needs visa info
-				visa_resp = supabase.table("visa_requirements").select("id").eq("user_profile_id", user_id).execute()
-				if profile.get("citizenship_country") and profile.get("destination_country") and not visa_resp.data:
-					next_steps.append({
-						"priority": "medium",
-						"action": "Research visa requirements",
-						"description": f"Learn about visa requirements for {profile.get('citizenship_country')} → {profile.get('destination_country')}",
-						"deadline": None,
-						"category": "visa"
-					})
-			
-			# Update summary with next steps
 			if summary_resp.data:
+				# Update existing summary
 				supabase.table("admissions_summary").update({
-					"next_steps": next_steps, 
+					"next_steps": next_steps,
 					"last_updated": datetime.now().isoformat()
 				}).eq("id", summary_resp.data[0]["id"]).execute()
+			else:
+				# Create new summary entry if it doesn't exist
+				supabase.table("admissions_summary").insert({
+					"user_id": user_id,
+					"next_steps": next_steps,
+					"last_updated": datetime.now().isoformat()
+				}).execute()
 			
 			return app.response_class(
 				response=json.dumps({
