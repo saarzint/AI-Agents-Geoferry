@@ -1491,7 +1491,8 @@ def register_routes(app: Flask) -> None:
 						"active_agents": [],
 						"stress_flags": {"incomplete_profile": True, "approaching_deadlines": 0, "agent_conflicts": False},
 						"next_steps": [],
-						"overview": {"universities_found": 0, "scholarships_found": 0, "application_requirements": 0, "visa_info_count": 0}
+						"overview": {"universities_found": 0, "scholarships_found": 0, "application_requirements": 0, "visa_info_count": 0},
+						"advice": ""
 					}
 				
 				# If no cached summary, add empty overview to basic structure
@@ -1525,6 +1526,7 @@ def register_routes(app: Flask) -> None:
 					"active_agents": summary_data.get("active_agents", []),
 					"stress_flags": summary_data.get("stress_flags", {}),
 					"next_steps": summary_data.get("next_steps", []),
+					"advice": summary_data.get("advice", ""),
 					"last_updated": datetime.now().isoformat()
 				}
 				

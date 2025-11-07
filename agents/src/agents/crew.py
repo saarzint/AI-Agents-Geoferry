@@ -473,14 +473,14 @@ class ManagerCrew():
                 "- NEVER delegate to agents that are NOT in missing_agents (these agents already have data and are active). "
                 "- If missing_agents is empty, skip all delegation and proceed directly to synthesis. "
                 "- When delegating to missing agents, ALWAYS include the actual user_id value in the context (e.g., 'user_id=10' not 'user_id={user_id}'). "
-                "- For each missing agent, delegate with a clear task description and user_id={user_id}. "
+                "- For each missing agent, delegate with a clear task description and user_id={user_id}. Track each delegated agent name in a delegated_agents list. "
                 "STEP 4 - GENERATE DETAILED NEXT STEPS: After delegation (or if missing_agents is empty), delegate to the Next Steps Generator Agent to create detailed, actionable next steps. "
                 "Delegate with this exact task: 'Generate detailed, actionable next steps for user_id={user_id} based on the current stage, approaching deadlines, and student progress. "
                 "You MUST return ONLY a valid JSON array (no markdown, no code blocks, no explanations). Start with [ and end with ]. "
                 "Each object must have: action (string), priority (High/Medium/Low), due_date (YYYY-MM-DD), related_agent (string), and reasoning (string). "
                 "Current stage: [use the current_stage from Stage Computation Agent]. "
                 "Approaching deadlines: [use the approaching_deadlines_details from Data Aggregator Agent]. "
-                "Active agents: [list active agents]. "
+                "Active agents: [list active agents based on available agents minus remaining missing_agents, making sure to include every agent whose task you delegated in this run even if they still appear in missing_agents because their data was not persisted]. "
                 "Missing profile fields: [list missing_profile_fields]. "
                 "Priority rules: High for deadlines within 14 days, Medium for 30 days, Low for beyond 30 days. "
                 "Due date rules: Set 7-10 days before actual deadlines, 3-7 days for urgent profile fields, 14 days for less urgent. "
@@ -489,25 +489,31 @@ class ManagerCrew():
                 "Return 3-5 next steps, ordered by priority (High first) then by due_date (earliest first).' "
                 "CRITICAL: The Next Steps Generator Agent's response should be a JSON array. If it includes markdown or extra text, extract only the JSON array portion. "
                 "Store the next_steps array from their response - you will use this in your final output. "
-                ""
-                "STEP 5 - SYNTHESIS: Synthesize a clear summary incorporating the detailed next steps from the Next Steps Generator Agent. "
+                "STEP 5 - GENERATE STRATEGIC ADVICE: Delegate to the Strategic Advice Generator Agent with this exact task: 'Provide mentor-style strategic admissions advice for user_id={user_id}. "
+                "Use the Stage Computation Tool and Admissions Data Tool as needed. The student's current stage is: <CURRENT_STAGE>. Summarize the biggest opportunities or risks from approaching deadlines and missing profile fields. "
+                "Deliver 2-3 sentences in a supportive tone that balance academics, extracurriculars, and wellbeing. Return ONLY plain text.' Replace <CURRENT_STAGE> with the actual current_stage string you received. "
+                "Capture the advice string exactly as returned - you will include it in your final output. "
+                "STEP 6 - SYNTHESIS: Synthesize a clear summary incorporating the detailed next steps and the strategic advice. "
                 "CRITICAL: Use the current_stage from the Stage Computation Agent's response - DO NOT compute or guess the stage yourself. "
                 "CRITICAL: Use the next_steps array from the Next Steps Generator Agent's response - DO NOT generate next steps yourself. "
-                "Your output must include: current_stage (use the exact value from Stage Computation Agent), progress_score (numeric 0-100), active_agents, overview, missing_profile_fields, approaching_deadlines_details, and next_steps (use the exact array from Next Steps Generator Agent). "
+                "CRITICAL: Use the advice string from the Strategic Advice Generator Agent exactly as returned - DO NOT rewrite or generate your own. "
+                "Compute stress_flags as an object with keys: incomplete_profile (true if the refreshed data shows the profile is incomplete), approaching_deadlines (true if any refreshed approaching_deadlines_details exist), and agent_conflicts (true only if you detect conflicting agent outputs). "
+                "Your output must include: current_stage (use the exact value from Stage Computation Agent), progress_score (numeric 0-100), active_agents, overview, missing_profile_fields, approaching_deadlines_details, stress_flags (use the rules above), next_steps (use the exact array from Next Steps Generator Agent), and advice (string from Strategic Advice Generator Agent). "
                 "ACTIVE_AGENTS RULES: "
-                "- active_agents should contain agent names that have data (i.e., agents NOT in missing_agents). "
+                "- active_agents should contain agent names that have data (i.e., agents NOT in missing_agents) plus any agents you delegated tasks to during this run (track them via delegated_agents). "
                 "- Available agents: 'University Search Agent', 'Scholarship Search Agent', 'Visa Information Agent', 'Application Requirement Agent'. "
-                "- DO NOT include 'Data Aggregator Agent', 'Stage Computation Agent', or 'Next Steps Generator Agent' in active_agents (these are internal helper agents). "
+                "- DO NOT include 'Data Aggregator Agent', 'Stage Computation Agent', 'Next Steps Generator Agent', or 'Strategic Advice Generator Agent' in active_agents (these are internal helper agents). "
                 "- Example: If missing_agents=['Visa Information Agent'], then active_agents=['University Search Agent', 'Scholarship Search Agent', 'Application Requirement Agent']."
             ),
             expected_output=(
                 "Return a JSON object with: current_stage (string - MUST use the value from Stage Computation Agent), progress_score (numeric 0-100, not a percentage string), "
                 "active_agents (array of strings - must exclude Data Aggregator Agent, Stage Computation Agent, and Next Steps Generator Agent), overview (string), missing_profile_fields (array of strings), "
-                "approaching_deadlines_details (array of objects), next_steps (array of objects - MUST use the exact array from Next Steps Generator Agent, each with action, priority, due_date, related_agent, and reasoning)"
+                "approaching_deadlines_details (array of objects), stress_flags (object with incomplete_profile, approaching_deadlines, agent_conflicts booleans), next_steps (array of objects - MUST use the exact array from Next Steps Generator Agent, each with action, priority, due_date, related_agent, and reasoning), "
+                "advice (string - MUST use the mentor-style strategic advice exactly as returned by the Strategic Advice Generator Agent)"
             )
         )
 
-        # Define Next Steps Generator agent (Lead + Dev)
+        # Define Next Steps Generator agent
         next_steps_generator_agent = Agent(
             role="Next Steps Generator Agent",
             goal="Generate actionable, prioritized next steps for students based on their current admissions journey stage and progress.",
@@ -527,9 +533,33 @@ class ManagerCrew():
             allow_delegation=False  # Specialist agent - generates steps, doesn't delegate
         )
 
+        # Define Strategic Advice Generator agent (mentor-style guidance)
+        strategic_advice_agent = Agent(
+            role="Strategic Advice Generator Agent",
+            goal="Provide high-level, mentor-style admissions advice that balances academics, extracurriculars, and wellbeing.",
+            backstory=(
+                "You are a supportive admissions mentor who distills insights from the student's stage, deadlines, and profile data. "
+                "Deliver 2-3 sentences of strategic, big-picture guidance that encourages balance (academics, extracurriculars, self-care) "
+                "and highlights how to focus efforts over the coming weeks. Maintain an encouraging, mentor-like tone. "
+                "Always return plain text without markdown and avoid reiterating detailed task lists."
+            ),
+            tools=[AdmissionsDataTool(), ProfileQueryTool(), StageComputationTool()],
+            verbose=True,
+            allow_delegation=False
+        )
+
         # Build and return the crew
         return Crew(
-            agents=[data_aggregator, stage_computation_agent, university_agent, scholarship_agent, visa_agent, application_agent, next_steps_generator_agent],
+            agents=[
+                data_aggregator,
+                stage_computation_agent,
+                university_agent,
+                scholarship_agent,
+                visa_agent,
+                application_agent,
+                next_steps_generator_agent,
+                strategic_advice_agent
+            ],
             tasks=[manager_task],
             manager_agent=manager,
             process=Process.hierarchical,
