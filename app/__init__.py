@@ -8,7 +8,7 @@ import os
 
 def create_app() -> Flask:
 	app = Flask(__name__)
-	CORS(app, resources={r"/*": {"origins": ["http://localhost:5173"]}})
+	CORS(app, resources={r"/*": {"origins": ["http://localhost:5173", "https://pgadmin-frontend-app.vercel.app"]}})
 	register_routes(app)
 	
 	# Start profile change listener (simple polling)
