@@ -1,4 +1,5 @@
 from flask import Flask
+from flask_cors import CORS
 from .routes import register_routes
 from .event_listener import start_profile_listener, stop_profile_listener
 import atexit
@@ -7,6 +8,7 @@ import os
 
 def create_app() -> Flask:
 	app = Flask(__name__)
+	CORS(app, resources={r"/*": {"origins": ["http://localhost:5173"]}})
 	register_routes(app)
 	
 	# Start profile change listener (simple polling)
