@@ -284,6 +284,9 @@ class ScholarshipMatcherTool(BaseTool):
                 user_preferences = json.loads(user_preferences)
             except:
                 user_preferences = {}
+        # Cloud Run stores some JSONB defaults as 0/1; ensure we always work with a dict
+        if not isinstance(user_preferences, dict):
+            user_preferences = {}
         
         scholarship_demographics = scholarship.get('demographic_requirements', [])
         
