@@ -35,6 +35,48 @@ class ScholarshipMatcherTool(BaseTool):
     )
     args_schema: Type[BaseModel] = ScholarshipMatcherInput
 
+    def _normalize_deadline(self, deadline: Any) -> Optional[str]:
+        """
+        Normalize deadline values to None if they represent unknown/invalid deadlines.
+        
+        Args:
+            deadline: Deadline value (can be str, date, None, or "Unknown Deadline")
+            
+        Returns:
+            Normalized deadline string (YYYY-MM-DD format) or None if unknown/invalid
+        """
+        if deadline is None:
+            return None
+        
+        # Convert "Unknown Deadline" strings to None
+        if isinstance(deadline, str):
+            deadline_lower = deadline.strip().lower()
+            if deadline_lower in ['unknown deadline', 'unknown', 'tbd', 'tba', 'n/a', 'na', '']:
+                return None
+        
+        # If it's already a date object, convert to string
+        if isinstance(deadline, date):
+            return deadline.isoformat()
+        
+        # If it's a string, try to validate it's a proper date format
+        if isinstance(deadline, str):
+            deadline_str = deadline.strip()
+            # Try to parse as date to validate
+            try:
+                for fmt in ['%Y-%m-%d', '%m/%d/%Y', '%B %d, %Y', '%m-%d-%Y', '%Y/%m/%d']:
+                    try:
+                        datetime.strptime(deadline_str, fmt).date()
+                        return deadline_str if fmt == '%Y-%m-%d' else datetime.strptime(deadline_str, fmt).date().isoformat()
+                    except ValueError:
+                        continue
+                # If no format matched and it's not "Unknown Deadline", return None
+                return None
+            except Exception:
+                return None
+        
+        # For any other type, return None
+        return None
+
     def _run(self, user_id: int, scholarships_data: List[Dict[str, Any]], matching_mode: str = "comprehensive") -> str:
         """
         Perform advanced scholarship matching with eligibility filtering.
@@ -51,97 +93,89 @@ class ScholarshipMatcherTool(BaseTool):
         if get_supabase is None:
             return "Error: Supabase client not available. Please check your configuration."
         
-        try:
-            # Always clean expired scholarships first - simple and effective
-            cleanup_result = self.clean_expired_scholarships(user_id)
-            print(f"Expired scholarship cleanup: {cleanup_result}")
+        # Always clean expired scholarships first - simple and effective
+        cleanup_result = self.clean_expired_scholarships(user_id)
+        print(f"Expired scholarship cleanup: {cleanup_result}")
+        
+        supabase = get_supabase()
+        
+        # Get user profile for matching
+        profile_resp = supabase.table('user_profile').select('*').eq('id', user_id).execute()
+        
+        if not profile_resp.data:
+            return f"Error: User profile {user_id} not found"
+        
+        user_profile = profile_resp.data[0]
+        
+        print(f"ScholarshipMatcherTool: Received {len(scholarships_data)} scholarships for user {user_id}")
+        
+        # STEP 1: Extract real scholarship data from URLs
+        enhanced_scholarships = []
+        for scholarship in scholarships_data:
+            enhanced_scholarship = self._extract_real_scholarship_data(scholarship)
+            enhanced_scholarships.append(enhanced_scholarship)
+        
+        # STEP 2: Filter out expired scholarships
+        active_scholarships = self._filter_active_scholarships(enhanced_scholarships)
+        print(f"ScholarshipMatcherTool: After deadline filtering: {len(active_scholarships)} active scholarships")
+        
+        # Apply matching algorithms to active scholarships only
+        matched_scholarships = []
+        
+        for scholarship in active_scholarships:
+            # Validate scholarship data quality
+            validated_scholarship = self._validate_scholarship_data(scholarship)
             
-            supabase = get_supabase()
+            # Skip scholarships without URLs
+            if not validated_scholarship.get('application_url') and not validated_scholarship.get('source_url'):
+                continue
             
-            # Get user profile for matching
-            profile_resp = supabase.table('user_profile').select('*').eq('id', user_id).execute()
+            match_result = self._evaluate_scholarship_match(user_profile, validated_scholarship)
             
-            if not profile_resp.data:
-                return f"Error: User profile {user_id} not found"
+            # Generate structured summary matching database schema
+            scholarship_summary = self.generate_scholarship_summary(validated_scholarship)
             
-            user_profile = profile_resp.data[0]
+            # Add categorization to the scholarship
+            scholarship_categories = self._categorize_scholarship(validated_scholarship)
             
-            print(f"ScholarshipMatcherTool: Received {len(scholarships_data)} scholarships for user {user_id}")
+            if match_result["eligible"]:
+                matched_scholarships.append({
+                    **scholarship_summary,  # Use structured summary instead of raw data
+                    "match_category": match_result["match_category"],
+                    "match_score": match_result["match_score"],
+                    "scholarship_categories": scholarship_categories,
+                    "eligibility_analysis": match_result["analysis"],
+                    "near_miss_reasons": match_result.get("near_miss_reasons", []),
+                    "why_match": match_result["explanation"]
+                })
+        
+        # Sort by match score (highest first)
+        matched_scholarships.sort(key=lambda x: x.get("match_score", 0), reverse=True)
+        
+        # Only save scholarships with valid URLs to database
+        # Final filter: Remove any expired scholarships that might have slipped through
+        final_scholarships = []
+        current_date = datetime.now().date()
+        
+        for scholarship in matched_scholarships:
+            # Normalize deadline - convert "Unknown Deadline" to None
+            deadline_str = self._normalize_deadline(scholarship.get('deadline'))
+            scholarship['deadline'] = deadline_str  # Update scholarship with normalized deadline
             
-            # STEP 1: Extract real scholarship data from URLs
-            enhanced_scholarships = []
-            for scholarship in scholarships_data:
-                enhanced_scholarship = self._extract_real_scholarship_data(scholarship)
-                enhanced_scholarships.append(enhanced_scholarship)
-            
-            # STEP 2: Filter out expired scholarships
-            active_scholarships = self._filter_active_scholarships(enhanced_scholarships)
-            print(f"ScholarshipMatcherTool: After deadline filtering: {len(active_scholarships)} active scholarships")
-            
-            # Apply matching algorithms to active scholarships only
-            matched_scholarships = []
-            
-            for scholarship in active_scholarships:
-                # Validate scholarship data quality
-                validated_scholarship = self._validate_scholarship_data(scholarship)
-                
-                # Skip scholarships without URLs
-                if not validated_scholarship.get('application_url') and not validated_scholarship.get('source_url'):
-                    continue
-                
-                match_result = self._evaluate_scholarship_match(user_profile, validated_scholarship)
-                
-                # Generate structured summary matching database schema
-                scholarship_summary = self.generate_scholarship_summary(validated_scholarship)
-                
-                # Add categorization to the scholarship
-                scholarship_categories = self._categorize_scholarship(validated_scholarship)
-                
-                if match_result["eligible"]:
-                    matched_scholarships.append({
-                        **scholarship_summary,  # Use structured summary instead of raw data
-                        "match_category": match_result["match_category"],
-                        "match_score": match_result["match_score"],
-                        "scholarship_categories": scholarship_categories,
-                        "eligibility_analysis": match_result["analysis"],
-                        "near_miss_reasons": match_result.get("near_miss_reasons", []),
-                        "why_match": match_result["explanation"]
-                    })
-            
-            # Sort by match score (highest first)
-            matched_scholarships.sort(key=lambda x: x.get("match_score", 0), reverse=True)
-            
-            # Only save scholarships with valid URLs to database
-            # Final filter: Remove any expired scholarships that might have slipped through
-            final_scholarships = []
-            current_date = datetime.now().date()
-            
-            for scholarship in matched_scholarships:
-                deadline_str = scholarship.get('deadline')
-                if deadline_str:
-                    try:
-                        deadline_date = datetime.strptime(deadline_str, '%Y-%m-%d').date()
-                        if deadline_date > current_date:
-                            final_scholarships.append(scholarship)
-                        else:
-                            print(f"Final filter: Excluded expired scholarship '{scholarship.get('name')}' (deadline: {deadline_str})")
-                    except (ValueError, TypeError):
-                        # If we can't parse the date, include it with a warning
-                        final_scholarships.append(scholarship)
-                        print(f"Warning: Could not parse deadline for '{scholarship.get('name')}': {deadline_str}")
-                else:
-                    # No deadline specified, include it
+            if deadline_str:
+                deadline_date = datetime.strptime(deadline_str, '%Y-%m-%d').date()
+                if deadline_date > current_date:
                     final_scholarships.append(scholarship)
-            
-            print(f"💾 Saving {len(final_scholarships)} scholarships to database")
-            self._save_scholarships_to_database(user_id, final_scholarships)
-            
-            return self._format_matching_output(user_id, matched_scholarships, matching_mode)
-                
-        except Exception as e:
-            error_msg = f"Error in scholarship matching: {str(e)}"
-            print(f"ScholarshipMatcherTool Error: {error_msg}")
-            return error_msg
+                else:
+                    print(f"Final filter: Excluded expired scholarship '{scholarship.get('name')}' (deadline: {deadline_str})")
+            else:
+                # No deadline specified (or was "Unknown Deadline"), include it
+                final_scholarships.append(scholarship)
+        
+        print(f"💾 Saving {len(final_scholarships)} scholarships to database")
+        self._save_scholarships_to_database(user_id, final_scholarships)
+        
+        return self._format_matching_output(user_id, matched_scholarships, matching_mode)
     
     def _evaluate_scholarship_match(self, user_profile: Dict[str, Any], scholarship: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -150,6 +184,19 @@ class ScholarshipMatcherTool(BaseTool):
         Returns:
             Dict with eligibility, match_category, match_score, analysis, and explanation
         """
+        
+        # CRITICAL: Normalize list fields to prevent "argument of type 'int' is not iterable" errors
+        # Some database fields (JSONB) may return integers (0/1) instead of lists
+        list_fields_to_normalize = [
+            'eligible_majors', 'field_keywords', 'demographic_requirements',
+            'location_restrictions', 'applicant_requirements', 'application_steps',
+            'required_documents', 'eligibility_requirements', 'requirements'
+        ]
+        for field in list_fields_to_normalize:
+            value = scholarship.get(field)
+            if value is not None and not isinstance(value, list):
+                # If it's an int, bool, or other non-list type, convert to empty list
+                scholarship[field] = []
         
         # Initialize scoring
         match_score = 0
@@ -185,16 +232,33 @@ class ScholarshipMatcherTool(BaseTool):
         max_possible_score += major_weight
         
         user_major = user_profile.get('intended_major', '').lower()
-        scholarship_fields = [f.lower() for f in scholarship.get('eligible_majors', [])]
-        scholarship_keywords = scholarship.get('field_keywords', [])
+        
+        # DEBUG: Check types before processing
+        eligible_majors_raw = scholarship.get('eligible_majors', [])
+        print(f"DEBUG Line 234: eligible_majors type={type(eligible_majors_raw)}, value={eligible_majors_raw}")
+        if not isinstance(eligible_majors_raw, list):
+            print(f"ERROR: eligible_majors is not a list! Type: {type(eligible_majors_raw)}, Value: {eligible_majors_raw}")
+            raise TypeError(f"eligible_majors must be a list, got {type(eligible_majors_raw)}: {eligible_majors_raw}")
+        
+        scholarship_fields = [f.lower() for f in eligible_majors_raw]
+        
+        field_keywords_raw = scholarship.get('field_keywords', [])
+        print(f"DEBUG Line 235: field_keywords type={type(field_keywords_raw)}, value={field_keywords_raw}")
+        if not isinstance(field_keywords_raw, list):
+            print(f"ERROR: field_keywords is not a list! Type: {type(field_keywords_raw)}, Value: {field_keywords_raw}")
+            raise TypeError(f"field_keywords must be a list, got {type(field_keywords_raw)}: {field_keywords_raw}")
+        
+        scholarship_keywords = field_keywords_raw
         
         if scholarship_fields or scholarship_keywords:
+            print(f"DEBUG Line 238: Checking if any field in {scholarship_fields} or keyword in {scholarship_keywords}")
             if any(field in user_major for field in scholarship_fields) or \
                any(keyword.lower() in user_major for keyword in scholarship_keywords):
                 match_score += major_weight
                 match_strengths.append(f"Major '{user_major}' matches scholarship field requirements")
             else:
                 # Check for related fields (near miss)
+                print(f"DEBUG Line 245: Combining {scholarship_fields} + {scholarship_keywords}")
                 related_match = self._check_related_majors(user_major, scholarship_fields + scholarship_keywords)
                 if related_match:
                     match_score += major_weight * 0.6
@@ -288,7 +352,13 @@ class ScholarshipMatcherTool(BaseTool):
         if not isinstance(user_preferences, dict):
             user_preferences = {}
         
-        scholarship_demographics = scholarship.get('demographic_requirements', [])
+        demographic_requirements_raw = scholarship.get('demographic_requirements', [])
+        print(f"DEBUG Line 355: demographic_requirements type={type(demographic_requirements_raw)}, value={demographic_requirements_raw}")
+        if not isinstance(demographic_requirements_raw, list):
+            print(f"ERROR: demographic_requirements is not a list! Type: {type(demographic_requirements_raw)}, Value: {demographic_requirements_raw}")
+            raise TypeError(f"demographic_requirements must be a list, got {type(demographic_requirements_raw)}: {demographic_requirements_raw}")
+        
+        scholarship_demographics = demographic_requirements_raw
         
         if not scholarship_demographics:
             match_score += demographic_weight * 0.95  # Open to all demographics
@@ -309,6 +379,7 @@ class ScholarshipMatcherTool(BaseTool):
             user_demo_text = f"{user_background} {user_identity} {user_status} {user_military} {user_demographics}".strip()
             
             # Check each scholarship demographic requirement
+            print(f"DEBUG Line 372: Iterating over scholarship_demographics: {scholarship_demographics}")
             for demo_req in scholarship_demographics:
                 demo_req_lower = demo_req.lower()
                 
@@ -369,7 +440,13 @@ class ScholarshipMatcherTool(BaseTool):
         max_possible_score += location_weight
         
         # Extract location data from user preferences JSONB (already loaded above)
-        scholarship_location = scholarship.get('location_restrictions', [])
+        location_restrictions_raw = scholarship.get('location_restrictions', [])
+        print(f"DEBUG Line 440: location_restrictions type={type(location_restrictions_raw)}, value={location_restrictions_raw}")
+        if not isinstance(location_restrictions_raw, list):
+            print(f"ERROR: location_restrictions is not a list! Type: {type(location_restrictions_raw)}, Value: {location_restrictions_raw}")
+            raise TypeError(f"location_restrictions must be a list, got {type(location_restrictions_raw)}: {location_restrictions_raw}")
+        
+        scholarship_location = location_restrictions_raw
         
         if not scholarship_location:
             match_score += location_weight
@@ -487,6 +564,16 @@ class ScholarshipMatcherTool(BaseTool):
         Returns:
             List of applicable categories
         """
+        # CRITICAL: Normalize list fields to prevent "argument of type 'int' is not iterable" errors
+        list_fields_to_normalize = [
+            'eligible_majors', 'field_keywords', 'demographic_requirements',
+            'location_restrictions', 'requirements', 'eligibility_requirements'
+        ]
+        for field in list_fields_to_normalize:
+            value = scholarship.get(field)
+            if value is not None and not isinstance(value, list):
+                scholarship[field] = []
+        
         categories = []
         
         # PRIORITY 1: Use agent-provided category if available and valid
@@ -816,20 +903,8 @@ for future retrieval and detailed scholarship recommendation explanations.
             # If no numeric value found, preserve the original string (e.g., "Full-Tuition", "Variable")
             # award_amount remains as the original string value
         
-        # Deadline - ensure proper date format
-        deadline = scholarship_data.get('deadline')
-        if isinstance(deadline, str):
-            from datetime import datetime
-            try:
-                # Try common date formats
-                for fmt in ['%Y-%m-%d', '%m/%d/%Y', '%B %d, %Y']:
-                    try:
-                        deadline = datetime.strptime(deadline, fmt).date().isoformat()
-                        break
-                    except ValueError:
-                        continue
-            except:
-                deadline = None
+        # Deadline - normalize "Unknown Deadline" to None and ensure proper date format
+        deadline = self._normalize_deadline(scholarship_data.get('deadline'))
         
         # Renewable flag
         renewable_flag = scholarship_data.get('renewable_flag', False) or \
@@ -935,12 +1010,15 @@ for future retrieval and detailed scholarship recommendation explanations.
                     "scholarship_categories": scholarship.get("scholarship_categories", [])
                 })
                 
+                # Normalize deadline - convert "Unknown Deadline" to None
+                normalized_deadline = self._normalize_deadline(scholarship.get("deadline"))
+                
                 record = {
                     "user_profile_id": user_id,
                     "name": scholarship.get("name", "Unknown Scholarship"),
                     "category": scholarship.get("category"),
                     "award_amount": scholarship.get("award_amount"),
-                    "deadline": scholarship.get("deadline"),
+                    "deadline": normalized_deadline,  # Normalized to None if "Unknown Deadline" or invalid
                     "renewable_flag": scholarship.get("renewable_flag", False),
                     "eligibility_summary": enhanced_eligibility_summary,
                     "source_url": scholarship.get("source_url") or scholarship.get("application_url", "")
@@ -1328,10 +1406,12 @@ for future retrieval and detailed scholarship recommendation explanations.
             active_scholarships = []
             
             for scholarship in scholarships_data:
-                deadline_str = scholarship.get('deadline')
+                # Normalize deadline - convert "Unknown Deadline" to None
+                deadline_str = self._normalize_deadline(scholarship.get('deadline'))
+                scholarship['deadline'] = deadline_str  # Update scholarship with normalized deadline
                 
                 if not deadline_str:
-                    # If no deadline specified, include but mark as unknown
+                    # If no deadline specified (or was "Unknown Deadline"), include but mark as unknown
                     scholarship['deadline_status'] = 'Unknown Deadline'
                     active_scholarships.append(scholarship)
                     continue
