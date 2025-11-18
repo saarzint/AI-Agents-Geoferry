@@ -347,7 +347,14 @@ def register_routes(app: Flask) -> None:
 		payload = request.get_json(silent=True) or {}
 		user_profile_id = payload.get("user_profile_id")
 		delta_search = payload.get("delta_search", False)
-		changed_fields = payload.get("changed_fields", [])
+		changed_fields_raw = payload.get("changed_fields", [])
+		
+		# CRITICAL: Ensure changed_fields is always a list to prevent "argument of type 'int' is not iterable" errors
+		if not isinstance(changed_fields_raw, list):
+			print(f"WARNING: changed_fields is not a list! Type: {type(changed_fields_raw)}, Value: {changed_fields_raw}. Converting to empty list.")
+			changed_fields = []
+		else:
+			changed_fields = changed_fields_raw
 		
 		if not user_profile_id:
 			return jsonify({"error": "user_profile_id is required"}), HTTPStatus.BAD_REQUEST
@@ -497,8 +504,16 @@ def register_routes(app: Flask) -> None:
 					"user_profile_id": user_profile_id
 				}), HTTPStatus.SERVICE_UNAVAILABLE
 			except Exception as e:
+				import traceback
+				error_traceback = traceback.format_exc()
+				print(f"ERROR in scholarship search - Full traceback:")
+				print(error_traceback)
+				print(f"ERROR Type: {type(e).__name__}")
+				print(f"ERROR Message: {str(e)}")
 				return jsonify({
 					"error": f"Scholarship search execution failed: {str(e)}",
+					"error_type": type(e).__name__,
+					"traceback": error_traceback,
 					"user_profile_id": user_profile_id
 				}), HTTPStatus.INTERNAL_SERVER_ERROR
 			

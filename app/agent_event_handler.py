@@ -173,15 +173,48 @@ class AgentEventHandler:
         Check for conflicts in university/program data.
         Returns True if conflicting data about the same entity.
         """
-        prev_uni = prev_payload.get("university", "").lower()
-        new_uni = new_payload.get("university", "").lower()
+        prev_uni = prev_payload.get("university", "")
+        if prev_uni and isinstance(prev_uni, str):
+            prev_uni = prev_uni.lower()
+        else:
+            prev_uni = ""
+        
+        new_uni = new_payload.get("university", "")
+        if new_uni and isinstance(new_uni, str):
+            new_uni = new_uni.lower()
+        else:
+            new_uni = ""
         
         # Check if both are about universities but provide different counts
-        if "universities" in prev_payload.get("universities_found", "") or \
-           "universities" in new_payload.get("universities_found", ""):
-            prev_count = prev_payload.get("universities_found", 0)
-            new_count = new_payload.get("universities_found", 0)
-            
+        # CRITICAL FIX: Handle both string and integer values for universities_found
+        prev_uni_found_raw = prev_payload.get("universities_found", 0)
+        new_uni_found_raw = new_payload.get("universities_found", 0)
+        
+        # Extract numeric count - handle both int and string formats
+        if isinstance(prev_uni_found_raw, (int, float)):
+            prev_count = int(prev_uni_found_raw)
+        elif isinstance(prev_uni_found_raw, str):
+            # Try to extract number from string
+            try:
+                prev_count = int(prev_uni_found_raw)
+            except (ValueError, TypeError):
+                prev_count = 0
+        else:
+            prev_count = 0
+        
+        if isinstance(new_uni_found_raw, (int, float)):
+            new_count = int(new_uni_found_raw)
+        elif isinstance(new_uni_found_raw, str):
+            # Try to extract number from string
+            try:
+                new_count = int(new_uni_found_raw)
+            except (ValueError, TypeError):
+                new_count = 0
+        else:
+            new_count = 0
+        
+        # Check if both payloads are about universities (have universities_found > 0)
+        if prev_count > 0 or new_count > 0:
             # Significant difference in counts could indicate a conflict
             if prev_count > 0 and new_count > 0 and abs(prev_count - new_count) > 10:
                 return True
