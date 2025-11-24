@@ -2,7 +2,7 @@ university_search_task:
   description: >
     Execute a comprehensive university search and ranking process using AI-powered discovery that outputs structured JSON data:
     
-    ⚠️ MANDATORY WORKFLOW VALIDATION: Before generating any university recommendations, you MUST demonstrate that you have executed Tavily searches by showing Tool Input/Output for web searches in your execution log
+    ⚠️ MANDATORY WORKFLOW VALIDATION: Before generating any university recommendations, you MUST demonstrate that you have executed OpenAI web search queries by showing Tool Input/Output for web searches in your execution log
     
     CRITICAL: NEVER GENERATE FICTIONAL UNIVERSITIES. ALL RECOMMENDATIONS MUST BE REAL UNIVERSITIES FOUND THROUGH WEB SEARCH.
     
@@ -11,19 +11,19 @@ university_search_task:
     STEP 1 - PROFILE RETRIEVAL (MANDATORY):
     Use Profile Query Tool with user_id: {user_id} to get user's academic profile, preferences, and constraints
     
-    STEP 2 - TAVILY SEARCH EXECUTION (MANDATORY - NO SKIPPING ALLOWED):
-    ⚠️ CRITICAL ENFORCEMENT: You MUST execute Tavily searches IMMEDIATELY after getting the user profile
-    ⚠️ VALIDATION CHECKPOINT: If you proceed to generate university recommendations without executing Tavily searches, the task FAILS
-    ⚠️ MINIMUM REQUIREMENT: Execute at least 3 different Tavily searches before proceeding to university generation
+    STEP 2 - OPENAI WEB SEARCH EXECUTION (MANDATORY - NO SKIPPING ALLOWED):
+    ⚠️ CRITICAL ENFORCEMENT: You MUST execute OpenAI web search queries IMMEDIATELY after getting the user profile
+    ⚠️ VALIDATION CHECKPOINT: If you proceed to generate university recommendations without executing OpenAI web search queries, the task FAILS
+    ⚠️ MINIMUM REQUIREMENT: Execute at least 3 different OpenAI web search queries before proceeding to university generation
     
-    TAVILY API VERIFICATION: Test Tavily Search with "university admissions requirements" to ensure API is working
+    OPENAI WEB SEARCH VERIFICATION: Use OpenAI's built-in web search with "university admissions requirements" to ensure web search is working
     
-    STEP 3 - MANDATORY REAL-TIME DISCOVERY: ALWAYS use Tavily Search regardless of how unusual the profile seems:
-       ⚠️ CRITICAL: YOU MUST EXECUTE TAVILY SEARCHES FOR EVERY REQUEST - NO EXCEPTIONS
-       ⚠️ TASK FAILURE CONDITIONS: If you generate university recommendations without executing Tavily searches, the entire task is considered FAILED
-       ⚠️ WORKFLOW ENFORCEMENT: Profile Query Tool → MANDATORY Tavily Searches → University Generation (this order cannot be changed)
+    STEP 3 - MANDATORY REAL-TIME DISCOVERY: ALWAYS use OpenAI's built-in web search regardless of how unusual the profile seems:
+       ⚠️ CRITICAL: YOU MUST EXECUTE OPENAI WEB SEARCH QUERIES FOR EVERY REQUEST - NO EXCEPTIONS
+       ⚠️ TASK FAILURE CONDITIONS: If you generate university recommendations without executing OpenAI web search queries, the entire task is considered FAILED
+       ⚠️ WORKFLOW ENFORCEMENT: Profile Query Tool → MANDATORY OpenAI Web Search Queries → University Generation (this order cannot be changed)
        ⚠️ DO NOT use internal knowledge or University Knowledge Tool as primary source
-       ⚠️ IF TAVILY API FAILS: Return error message "Tavily Search API unavailable - cannot provide real-time university data"
+       ⚠️ IF OPENAI WEB SEARCH FAILS: Return error message "OpenAI web search unavailable - cannot provide real-time university data"
        
        REQUIRED SEARCHES (execute ALL of these for every request):
        - Search: "university admissions requirements [user's intended major] [user's location]"
@@ -38,14 +38,14 @@ university_search_task:
        - Include interdisciplinary programs that combine related fields
        - Mark results as "Near-Fit" due to program differences
     STEP 5 - NO RESULTS PROTOCOL: 
-       ⚠️ IF TAVILY API IS DOWN/UNREACHABLE: Return {"error": "Tavily Search API unavailable", "universities_found": 0}
-       ⚠️ IF TAVILY SEARCHES RETURN NO SUITABLE REAL UNIVERSITIES: Return {"universities_found": 0, "universities": []}
+       ⚠️ IF OPENAI WEB SEARCH IS DOWN/UNREACHABLE: Return {"error": "OpenAI web search unavailable", "universities_found": 0}
+       ⚠️ IF OPENAI WEB SEARCH QUERIES RETURN NO SUITABLE REAL UNIVERSITIES: Return {"universities_found": 0, "universities": []}
        ⚠️ NEVER FALL BACK TO INTERNAL KNOWLEDGE - Always indicate search source failure
        - DO NOT create fictional universities
        - DO NOT use University Knowledge Tool fallback for unusual cases
     STEP 6 - REAL DATA ONLY: Every university in your response must be:
        - A real, accredited institution
-       - Found through Tavily web search with verifiable URLs
+       - Found through OpenAI web search with verifiable URLs
        - Have verifiable admission data and programs from trusted sources
     STEP 7 - APPLY FILTERS: Filter universities based on location, budget, intended major, and preferences
     STEP 8 - ENSURE GEOGRAPHIC DIVERSITY: Include universities from multiple states/regions for broader options
@@ -147,7 +147,7 @@ university_search_task:
     - Community colleges with transfer programs
     - Schools specifically known for accepting lower GPA students
     
-    TAVILY SEARCH MODIFICATIONS FOR BROADENED SEARCH:
+    OPENAI WEB SEARCH MODIFICATIONS FOR BROADENED SEARCH:
     - Search for "universities accepting 2.5 GPA students"
     - Search for "community colleges pre-medicine transfer programs"
     - Search for "state universities low GPA acceptance"
@@ -161,7 +161,7 @@ university_search_task:
     - CRITICAL: Return EXACTLY 6-8 universities total (3-4 reaches + 3-4 near-fits)
     - NO MORE than 8 universities in any response
     
-    TAVILY SEARCH BEST PRACTICES:
+    OPENAI WEB SEARCH BEST PRACTICES:
     - Use specific queries targeting university admission data
     - Focus on trusted educational domains (usnews.com, niche.com, collegeboard.org)
     - Include current year for current information

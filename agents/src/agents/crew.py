@@ -3,7 +3,7 @@ from crewai.project import CrewBase, agent, crew, task
 from crewai.agents.agent_builder.base_agent import BaseAgent
 from crewai_tools import TavilySearchTool
 from typing import List
-from .tools import ProfileQueryTool, UniversityKnowledgeTool, ProfileChangesTool, ScholarshipMatcherTool, ScholarshipKnowledgeTool, ProfileRequestParsingTool, WebDataRetrievalTool, ApplicationDataExtractionTool, ProfileAccessTool, VisaScraperTool, AdmissionsDataTool, StageComputationTool
+from .tools import ProfileQueryTool, UniversityKnowledgeTool, ProfileChangesTool, ScholarshipMatcherTool, ScholarshipKnowledgeTool, ProfileRequestParsingTool, WebDataRetrievalTool, ApplicationDataExtractionTool, ProfileAccessTool, VisaScraperTool, AdmissionsDataTool, StageComputationTool, OpenAIWebSearchTool
 
 # If you want to run a snippet of code before or after the crew starts,
 # you can use the @before_kickoff and @after_kickoff decorators
@@ -36,18 +36,8 @@ class SearchCrew():
             config=config,
             tools=[
                 ProfileQueryTool(),           # Gets user profile from Supabase
-                UniversityKnowledgeTool(),    # Static university knowledge base  
-                TavilySearchTool(             # AI-powered web search for comprehensive university discovery
-                    search_depth="advanced",
-                    max_results=8,
-                    include_answer=True,
-                    topic="general",
-                    include_domains=[
-                        "usnews.com", "niche.com", "collegeboard.org", 
-                        "petersons.com", "princetonreview.com", "cappex.com"
-                    ],
-                    max_tokens=10000,
-                )
+                UniversityKnowledgeTool(),    # Static university knowledge base
+                OpenAIWebSearchTool()        # OpenAI's built-in web search using Responses API
             ],
             verbose=True,
             allow_delegation=False  # Specialist agent - cannot delegate to others
@@ -356,13 +346,7 @@ class ManagerCrew():
             tools=[
                 ProfileQueryTool(),
                 UniversityKnowledgeTool(),
-                TavilySearchTool(
-                    search_depth="advanced",
-                    max_results=8,
-                    include_answer=True,
-                    topic="general",
-                    include_domains=["usnews.com", "niche.com", "collegeboard.org", "petersons.com", "princetonreview.com", "cappex.com"]
-                )
+                OpenAIWebSearchTool()
             ],
             verbose=True,
             allow_delegation=False
