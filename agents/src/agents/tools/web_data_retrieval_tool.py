@@ -41,6 +41,27 @@ class WebDataRetrievalTool(BaseTool):
         
         # Extended mapping of well-known universities to their official domains
         university_mappings = {
+            # United Kingdom examples / .ac domains
+            'university of hull': 'hull.ac.uk',
+            'university of oxford': 'ox.ac.uk',
+            'oxford university': 'ox.ac.uk',
+            'university of cambridge': 'cam.ac.uk',
+            'imperial college london': 'imperial.ac.uk',
+            'university college london': 'ucl.ac.uk',
+            'london school of economics': 'lse.ac.uk',
+            'lse': 'lse.ac.uk',
+            'university of manchester': 'manchester.ac.uk',
+            'king\'s college london': 'kcl.ac.uk',
+            'kings college london': 'kcl.ac.uk',
+            'university of edinburgh': 'ed.ac.uk',
+            'university of glasgow': 'gla.ac.uk',
+            'university of birmingham': 'bham.ac.uk',
+            'university of bristol': 'bristol.ac.uk',
+            'university of leeds': 'leeds.ac.uk',
+            'durham university': 'dur.ac.uk',
+            'warwick university': 'warwick.ac.uk',
+            'university of warwick': 'warwick.ac.uk',
+            
             # University of Southern California
             'usc': 'usc.edu',
             'university of southern california': 'usc.edu',
@@ -173,20 +194,68 @@ class WebDataRetrievalTool(BaseTool):
         
         return 'university.edu'
 
+    def _generate_domain_candidates(self, university_name: str) -> list[str]:
+        """Generate possible official domains, including common .ac.* variations."""
+        primary_domain = self._extract_official_domain(university_name)
+        candidates = [primary_domain]
+        
+        university_lower = university_name.lower().strip()
+        words_to_remove = ['university', 'college', 'institute', 'of', 'the', 'at', 'in', 'for']
+        name_words = [w for w in university_lower.split() if w not in words_to_remove]
+        if not name_words:
+            name_words = [w for w in university_lower.split() if w]
+        
+        base_tokens = set()
+        if name_words:
+            base_tokens.add(''.join(name_words))
+            base_tokens.add(name_words[-1])
+            if len(name_words) > 1:
+                base_tokens.add(''.join(name_words[:2]))
+        else:
+            base_tokens.add(university_lower.replace(' ', ''))
+        
+        ac_tlds = [
+            'ac.uk', 'ac.in', 'ac.nz', 'ac.jp', 'ac.kr', 'ac.za',
+            'ac.il', 'ac.ae', 'ac.sg', 'ac.cn', 'ac.th', 'ac.id',
+            'ac.ke', 'ac.ug', 'ac.tz'
+        ]
+        
+        for base in base_tokens:
+            if not base:
+                continue
+            for tld in ac_tlds:
+                candidates.append(f'{base}.{tld}')
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        ordered_candidates = []
+        for domain in candidates:
+            if domain and domain not in seen:
+                ordered_candidates.append(domain)
+                seen.add(domain)
+        
+        return ordered_candidates
+
+    def _domain_matches(self, url: str, domain: str) -> bool:
+        """Check if URL belongs to provided domain or its subdomain."""
+        if not url or not domain:
+            return False
+        parsed_url = urlparse(url)
+        netloc = parsed_url.netloc.lower()
+        domain = domain.lower()
+        return netloc == domain or netloc.endswith(f'.{domain}')
+
     def _is_official_domain(self, url: str, university_name: str) -> bool:
         """Check if the URL belongs to an official university domain"""
         parsed_url = urlparse(url)
         domain = parsed_url.netloc.lower()
         
-        # Get the official domain for this university
-        official_domain = self._extract_official_domain(university_name)
-        
-        # Check if this is an exact or subdomain match
-        exact_match = domain == official_domain
-        subdomain_match = domain.endswith(f'.{official_domain}')
+        domain_candidates = self._generate_domain_candidates(university_name)
+        exact_match = any(domain == candidate for candidate in domain_candidates)
+        subdomain_match = any(domain.endswith(f'.{candidate}') for candidate in domain_candidates)
         
         # Also check for .edu domains with university name in them
-        is_edu = '.edu' in domain or '.ac.' in domain
+        is_edu_or_ac = '.edu' in domain or '.ac.' in domain
         
         # If it's an exact match or subdomain match, it's official
         if exact_match or subdomain_match:
@@ -199,7 +268,7 @@ class WebDataRetrievalTool(BaseTool):
         # Check for university name components in domain
         domain_matches = any(part in domain for part in name_parts) or any(part[:3] in domain for part in name_parts if len(part) > 3)
         
-        return is_edu and domain_matches
+        return is_edu_or_ac and domain_matches
 
     def _search_university_info(self, university: str, program: str = None) -> Dict[str, Any]:
         """Search for specific program admission information using Tavily"""
@@ -210,68 +279,73 @@ class WebDataRetrievalTool(BaseTool):
 
             client = TavilyClient(api_key=tavily_api_key)
             
-            # Get the official domain for this university
-            official_domain = self._extract_official_domain(university)
+            domain_candidates = self._generate_domain_candidates(university)
             current_year = datetime.now().year
             next_year = current_year + 1
             
-            # Construct targeted search queries
+            all_results = []
+            selected_official_domain = None
+            
             if program:
-                # STAGE 1: Search within official domain first (priority)
-                official_queries = [
-                    # Application requirements pages
-                    f'site:{official_domain} {program} application requirements',
-                    f'site:{official_domain} {program} admissions requirements deadlines',
-                    f'site:{official_domain} {program} department admission how to apply',
-                    f'site:{official_domain} {program} program admission application',
-                    
-                    # Deadlines with current year focus
-                    f'site:{official_domain} {program} application deadlines {current_year} {next_year}',
-                    f'site:{official_domain} {program} admission deadlines apply',
-                    f'site:{official_domain} {program} deadlines early decision regular decision',
-                    
-                    # Program-specific pages (no degree level restriction)
-                    f'site:{official_domain} department {program} admission',
-                    f'site:{official_domain} {program} requirements apply',
-                    f'site:{official_domain} {program} degree admission requirements'
-                ]
-                
-                # STAGE 2: Broader search if no official results
                 broader_queries = [
                     f'"{university}" "{program}" application requirements deadlines {current_year}',
                     f'"{university}" "{program}" admission requirements deadlines',
                     f'"{university}" "{program}" application deadlines'
                 ]
             else:
-                # General university admissions (no degree level restriction)
-                official_queries = [
-                    f'site:{official_domain} admission requirements',
-                    f'site:{official_domain} admission application deadlines {current_year}',
-                    f'site:{official_domain} admission deadlines apply'
-                ]
                 broader_queries = [
                     f"{university} admission requirements {current_year}"
                 ]
             
-            # Perform searches starting with official domain
-            all_results = []
-            
-            # STAGE 1: Search official domain first
-            print(f"[DEBUG] Searching official domain: {official_domain}")
-            for query in official_queries:
-                try:
-                    search_result = client.search(
-                        query=query,
-                        search_depth="advanced",
-                        exclude_domains=["wikipedia.org", "facebook.com", "twitter.com", "linkedin.com", "reddit.com", "quora.com"]
-                    )
-                    results = search_result.get('results', [])
-                    if results:
-                        all_results.extend(results)
-                        print(f"[DEBUG] Found {len(results)} results from official domain query: {query}")
-                except Exception as e:
-                    print(f"[DEBUG] Query failed: {query}, error: {str(e)}")
+            for official_domain in domain_candidates:
+                official_queries = []
+                if program:
+                    official_queries = [
+                        f'site:{official_domain} {program} application requirements',
+                        f'site:{official_domain} {program} admissions requirements deadlines',
+                        f'site:{official_domain} {program} department admission how to apply',
+                        f'site:{official_domain} {program} program admission application',
+                        f'site:{official_domain} {program} application deadlines {current_year} {next_year}',
+                        f'site:{official_domain} {program} admission deadlines apply',
+                        f'site:{official_domain} {program} deadlines early decision regular decision',
+                        f'site:{official_domain} department {program} admission',
+                        f'site:{official_domain} {program} requirements apply',
+                        f'site:{official_domain} {program} degree admission requirements'
+                    ]
+                else:
+                    official_queries = [
+                        f'site:{official_domain} admission requirements',
+                        f'site:{official_domain} admission application deadlines {current_year}',
+                        f'site:{official_domain} admission deadlines apply'
+                    ]
+                
+                candidate_results = []
+                print(f"[DEBUG] Searching official domain: {official_domain}")
+                for query in official_queries:
+                    try:
+                        search_result = client.search(
+                            query=query,
+                            search_depth="advanced",
+                            exclude_domains=["wikipedia.org", "facebook.com", "twitter.com", "linkedin.com", "reddit.com", "quora.com"]
+                        )
+                        results = search_result.get('results', [])
+                        if results:
+                            candidate_results.extend(results)
+                            print(f"[DEBUG] Found {len(results)} results from official domain query: {query}")
+                    except Exception as e:
+                        print(f"[DEBUG] Query failed: {query}, error: {str(e)}")
+                        continue
+                
+                if not candidate_results:
                     continue
+                
+                has_domain_match = any(self._domain_matches(res.get('url', ''), official_domain) for res in candidate_results)
+                if has_domain_match:
+                    all_results.extend(candidate_results)
+                    selected_official_domain = official_domain
+                    break
+                else:
+                    print(f"[DEBUG] Results for domain {official_domain} did not include matching URLs, trying next candidate")
             
             # STAGE 2: If no official results or insufficient results, try broader search
             if not all_results or len(all_results) < 2:
@@ -292,13 +366,14 @@ class WebDataRetrievalTool(BaseTool):
             else:
                 print(f"[DEBUG] Found sufficient results from official domain, skipping broader search")
             
+            if not selected_official_domain:
+                # Fall back to first candidate for scoring/diagnostics
+                selected_official_domain = domain_candidates[0] if domain_candidates else None
+            
             # Process and filter results from all searches - find the BEST single result
             best_result = None
             best_score = -1
             seen_urls = set()  # Avoid duplicates
-            
-            # Get official domain for priority scoring
-            official_domain = self._extract_official_domain(university)
             
             for result in all_results:
                 url = result.get('url')
@@ -307,7 +382,8 @@ class WebDataRetrievalTool(BaseTool):
                 
                 # Check if it's an official domain
                 is_official = self._is_official_domain(url, university)
-                if not is_official and not '.edu' in url.lower():
+                url_lower = url.lower()
+                if not is_official and '.edu' not in url_lower and '.ac.' not in url_lower:
                     continue  # Skip if it's not an official domain
                 
                 # Check robots.txt
@@ -318,13 +394,12 @@ class WebDataRetrievalTool(BaseTool):
                 
                 # Calculate relevance score
                 score = 0
-                url_lower = url.lower()
                 content = result.get('content', '').lower()
                 title = result.get('title', '').lower()
                 current_year = datetime.now().year
                 
                 # CRITICAL: Prioritize official domain matches (highest priority)
-                if official_domain and official_domain in url_lower:
+                if selected_official_domain and selected_official_domain in url_lower:
                     score += 50  # Massive boost for exact official domain match
                     print(f"[DEBUG] Official domain match found: {url}")
                 elif '.edu' in url_lower or '.ac.' in url_lower:
