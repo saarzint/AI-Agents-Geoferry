@@ -1,18 +1,17 @@
 from crewai.tools import BaseTool
 from typing import Type, Optional, Dict, Any
 from pydantic import BaseModel, Field
+import traceback
+import contextlib
 import sys
 import os
 import json
 
 # Add the app directory to the Python path to import supabase_client
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', 'app'))
-
-try:
-    from supabase_client import get_supabase
-except ImportError:
-    print("Warning: Could not import supabase_client. Make sure the app module is in the Python path.")
-    get_supabase = None
+app_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'app'))
+if app_path not in sys.path:
+    sys.path.insert(0, app_path)
+from supabase_client import get_supabase  # type: ignore
 
 
 class ProfileAccessInput(BaseModel):
@@ -29,24 +28,33 @@ class ProfileAccessTool(BaseTool):
     )
     args_schema: Type[BaseModel] = ProfileAccessInput
 
-    def _run(self, **kwargs) -> str:
+    def _run(self, user_id: Optional[int] = None, **kwargs: Dict[str, Any]) -> str:
         try:
-            # Normalize CrewAI calling conventions
-            if 'user_id' not in kwargs and len(kwargs) == 1 and isinstance(list(kwargs.values())[0], (str, int)):
-                candidate = list(kwargs.values())[0]
-                kwargs = {'user_id': int(candidate)}
-        except Exception:
-            pass
-
-        user_id: Optional[int] = kwargs.get('user_id')
-        if user_id is None:
-            return json.dumps({"error": "user_id is required"})
-
-        if get_supabase is None:
-            return json.dumps({"error": "Supabase client not available"})
-
-        try:
+            # Handle case where user_id might be passed in kwargs
+            if user_id is None:
+                if 'user_id' in kwargs:
+                    user_id = kwargs['user_id']
+                elif len(kwargs) == 1:
+                    potential_id = list(kwargs.values())[0]
+                    if isinstance(potential_id, (str, int)):
+                        try:
+                            user_id = int(potential_id)
+                        except (ValueError, TypeError):
+                            pass
+            
+            if user_id is None:
+                return json.dumps({"error": "user_id is required"})
+            
+            # Ensure user_id is an integer
+            try:
+                user_id = int(user_id)
+            except (ValueError, TypeError):
+                return json.dumps({"error": f"Invalid user_id: {user_id}"})
+            
             supabase = get_supabase()
+            if not supabase:
+                return json.dumps({"error": "Supabase client not available"})
+
             resp = supabase.table('user_profile').select('*').eq('id', user_id).limit(1).execute()
             if not resp.data:
                 return json.dumps({"error": f"No user profile found with ID: {user_id}"})

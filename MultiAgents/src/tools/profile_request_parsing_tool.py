@@ -7,10 +7,14 @@ import os
 # Add the app directory to the Python path to import supabase_client
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', 'app'))
 
+import logging
+logger = logging.getLogger(__name__)
+
 try:
     from supabase_client import get_supabase
 except ImportError:
     print("Warning: Could not import supabase_client. Make sure the app module is in the Python path.")
+    logger.warning("Could not import supabase_client. Make sure the app module is in the Python path.")
     get_supabase = None
 
 class ProfileRequestParsingInput(BaseModel):

@@ -4,6 +4,10 @@ from pydantic import BaseModel, Field
 from crewai.knowledge.source.json_knowledge_source import JSONKnowledgeSource
 import sys
 import os
+import logging
+
+# Set up logger for this module
+logger = logging.getLogger(__name__)
 
 # Add the app directory to the Python path for supabase_client if needed
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', 'app'))
@@ -48,21 +52,24 @@ class UniversityKnowledgeTool(BaseTool):
                 # For now, we'll just mark as initialized
                 self._knowledge_initialized = True
                 print(f"University Knowledge Tool initialized with knowledge file: {knowledge_file}")
+                logger.info(f"University Knowledge Tool initialized with knowledge file: {knowledge_file}")
             else:
                 print(f"Knowledge file not found at: {self._knowledge_file_path}")
+                logger.warning(f"Knowledge file not found at: {self._knowledge_file_path}")
                 self._knowledge_initialized = False
             
         except Exception as e:
             print(f"Warning: Could not initialize University Knowledge Tool: {str(e)}")
+            logger.warning(f"Could not initialize University Knowledge Tool: {str(e)}")
             self._knowledge_initialized = False
     
     def _get_knowledge_file_path(self):
         """Get the absolute path to the universities.json file."""
         try:
-            # Path relative to the agents directory
+            # Path relative to the tools directory: tools/ -> src/ -> MultiAgents/ -> knowledge/
             knowledge_path = os.path.join(
                 os.path.dirname(__file__), 
-                '..', '..', '..', 
+                '..', '..', 
                 'knowledge', 
                 'universities.json'
             )

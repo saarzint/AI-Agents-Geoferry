@@ -5,6 +5,10 @@ from crewai.knowledge.source.json_knowledge_source import JSONKnowledgeSource
 import sys
 import os
 import json
+import logging
+
+# Set up logger for this module
+logger = logging.getLogger(__name__)
 
 # Add the app directory to the Python path for supabase_client if needed
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', 'app'))
@@ -54,12 +58,15 @@ class ScholarshipKnowledgeTool(BaseTool):
                 
                 self._knowledge_initialized = True
                 print(f"Scholarship Knowledge Tool initialized with {len(self._scholarships_data)} scholarships")
+                logger.info(f"Scholarship Knowledge Tool initialized with {len(self._scholarships_data)} scholarships")
             else:
                 print(f"Warning: Scholarship knowledge file not found at expected path: {self._knowledge_file_path}")
+                logger.warning(f"Scholarship knowledge file not found at expected path: {self._knowledge_file_path}")
                 self._knowledge_initialized = False
         
         except Exception as e:
             print(f"Error initializing Scholarship Knowledge Tool: {e}")
+            logger.error(f"Error initializing Scholarship Knowledge Tool: {e}")
             self._knowledge_initialized = False
     
     def _get_knowledge_file_path(self):
@@ -68,7 +75,8 @@ class ScholarshipKnowledgeTool(BaseTool):
             # Get the directory of this file
             current_dir = os.path.dirname(os.path.abspath(__file__))
             
-            knowledge_dir = os.path.join(current_dir, '..', '..', '..', 'knowledge')
+            # Path relative to the tools directory: tools/ -> src/ -> MultiAgents/ -> knowledge/
+            knowledge_dir = os.path.join(current_dir, '..', '..', 'knowledge')
             knowledge_file = os.path.join(knowledge_dir, 'scholarships.json')
             
             # Normalize the path
@@ -78,6 +86,7 @@ class ScholarshipKnowledgeTool(BaseTool):
         
         except Exception as e:
             print(f"Error determining knowledge file path: {e}")
+            logger.error(f"Error determining knowledge file path: {e}")
             return None
     
     def _semantic_search(self, query: str, scholarships: List[Dict], limit: int = 5) -> List[Dict]:
