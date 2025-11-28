@@ -6,7 +6,11 @@ from urllib.parse import urljoin, urlparse
 from tavily import TavilyClient
 import os
 import json
+import logging
 from datetime import datetime
+
+# Set up logger for this module
+logger = logging.getLogger(__name__)
 
 class WebDataRetrievalInput(BaseModel):
     """Input schema for WebDataRetrievalTool."""
@@ -321,6 +325,7 @@ class WebDataRetrievalTool(BaseTool):
                 
                 candidate_results = []
                 print(f"[DEBUG] Searching official domain: {official_domain}")
+                logger.debug(f"Searching official domain: {official_domain}")
                 for query in official_queries:
                     try:
                         search_result = client.search(
@@ -332,8 +337,10 @@ class WebDataRetrievalTool(BaseTool):
                         if results:
                             candidate_results.extend(results)
                             print(f"[DEBUG] Found {len(results)} results from official domain query: {query}")
+                            logger.debug(f"Found {len(results)} results from official domain query: {query}")
                     except Exception as e:
                         print(f"[DEBUG] Query failed: {query}, error: {str(e)}")
+                        logger.debug(f"Query failed: {query}, error: {str(e)}")
                         continue
                 
                 if not candidate_results:
@@ -346,10 +353,12 @@ class WebDataRetrievalTool(BaseTool):
                     break
                 else:
                     print(f"[DEBUG] Results for domain {official_domain} did not include matching URLs, trying next candidate")
+                    logger.debug(f"Results for domain {official_domain} did not include matching URLs, trying next candidate")
             
             # STAGE 2: If no official results or insufficient results, try broader search
             if not all_results or len(all_results) < 2:
                 print(f"[DEBUG] Searching broader web for {university}")
+                logger.debug(f"Searching broader web for {university}")
                 for query in broader_queries:
                     try:
                         search_result = client.search(
@@ -361,10 +370,12 @@ class WebDataRetrievalTool(BaseTool):
                         if results:
                             all_results.extend(results)
                             print(f"[DEBUG] Found {len(results)} results from broader query: {query}")
+                            logger.debug(f"Found {len(results)} results from broader query: {query}")
                     except Exception as e:
                         continue
-            else:
-                print(f"[DEBUG] Found sufficient results from official domain, skipping broader search")
+                else:
+                    print(f"[DEBUG] Found sufficient results from official domain, skipping broader search")
+                    logger.debug(f"Found sufficient results from official domain, skipping broader search")
             
             if not selected_official_domain:
                 # Fall back to first candidate for scoring/diagnostics
@@ -402,6 +413,7 @@ class WebDataRetrievalTool(BaseTool):
                 if selected_official_domain and selected_official_domain in url_lower:
                     score += 50  # Massive boost for exact official domain match
                     print(f"[DEBUG] Official domain match found: {url}")
+                    logger.debug(f"Official domain match found: {url}")
                 elif '.edu' in url_lower or '.ac.' in url_lower:
                     score += 10  # Good score for any .edu domain
                 else:
@@ -462,6 +474,7 @@ class WebDataRetrievalTool(BaseTool):
                     if app_indicator_count > 0:
                         score += min(app_indicator_count * 3, 15)  # Up to 15 points for application-specific content
                         print(f"[DEBUG] Application-specific content detected (score+{min(app_indicator_count * 3, 15)})")
+                        logger.debug(f"Application-specific content detected (score+{min(app_indicator_count * 3, 15)})")
                     
                     # Catalog indicators are LOWER priority for application requirements agent
                     catalog_indicators = ['units:', 'units', 'course requirements', 'credit hours', 
@@ -470,6 +483,7 @@ class WebDataRetrievalTool(BaseTool):
                     if catalog_count > 0:
                         score += min(catalog_count, 2)  # Only 2 points max for catalog-style content
                         print(f"[DEBUG] Catalog-style content detected (score+{min(catalog_count, 2)})")
+                        logger.debug(f"Catalog-style content detected (score+{min(catalog_count, 2)})")
                     
                     # Title relevance
                     if any(prog_word in title for prog_word in program_words):
@@ -499,6 +513,7 @@ class WebDataRetrievalTool(BaseTool):
                         if past_year in url_lower and current_year not in content:
                             score -= 20  # Penalty for old data
                             print(f"[DEBUG] Outdated content detected (year: {past_year}), penalty applied")
+                            logger.debug(f"Outdated content detected (year: {past_year}), penalty applied")
                 
                 # Application-related content scoring
                 app_keywords = [
@@ -535,6 +550,7 @@ class WebDataRetrievalTool(BaseTool):
                     if not has_app_info:
                         score -= 20  # Strong penalty: catalog pages don't have application requirements
                         print(f"[DEBUG] Catalog page detected without application info, penalty applied")
+                        logger.debug(f"Catalog page detected without application info, penalty applied")
                 
                 # Moderate penalty for pages with neither program name NOR application info
                 has_app_keywords = any(kw in content.lower()[:2000] for kw in 
@@ -543,9 +559,11 @@ class WebDataRetrievalTool(BaseTool):
                 if program and program_lower not in content.lower()[:1000] and not has_app_keywords:
                     score -= 10
                     print(f"[DEBUG] Generic page with no specific program or application info")
+                    logger.debug(f"Generic page with no specific program or application info")
                 
                 # DEBUG: Print score for each result
                 print(f"[DEBUG] URL: {url[:80]}... | Score: {score}")
+                logger.debug(f"URL: {url[:80]}... | Score: {score}")
                 
                 # If this is the best result so far, save it
                 if score > best_score:

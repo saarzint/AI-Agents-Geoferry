@@ -6,7 +6,11 @@ import os
 import re
 import json
 import requests
+import logging
 from datetime import datetime, date
+
+# Set up logger for this module
+logger = logging.getLogger(__name__)
 
 # Add the app directory to the Python path to import supabase_client
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', 'app'))
@@ -15,6 +19,7 @@ try:
     from supabase_client import get_supabase
 except ImportError:
     print("Warning: Could not import supabase_client. Make sure the app module is in the Python path.")
+    logger.warning("Could not import supabase_client. Make sure the app module is in the Python path.")
     get_supabase = None
 
 
@@ -96,6 +101,7 @@ class ScholarshipMatcherTool(BaseTool):
         # Always clean expired scholarships first - simple and effective
         cleanup_result = self.clean_expired_scholarships(user_id)
         print(f"Expired scholarship cleanup: {cleanup_result}")
+        logger.info(f"Expired scholarship cleanup: {cleanup_result}")
         
         supabase = get_supabase()
         
@@ -108,6 +114,7 @@ class ScholarshipMatcherTool(BaseTool):
         user_profile = profile_resp.data[0]
         
         print(f"ScholarshipMatcherTool: Received {len(scholarships_data)} scholarships for user {user_id}")
+        logger.info(f"ScholarshipMatcherTool: Received {len(scholarships_data)} scholarships for user {user_id}")
         
         # STEP 1: Extract real scholarship data from URLs
         enhanced_scholarships = []
@@ -118,6 +125,7 @@ class ScholarshipMatcherTool(BaseTool):
         # STEP 2: Filter out expired scholarships
         active_scholarships = self._filter_active_scholarships(enhanced_scholarships)
         print(f"ScholarshipMatcherTool: After deadline filtering: {len(active_scholarships)} active scholarships")
+        logger.info(f"ScholarshipMatcherTool: After deadline filtering: {len(active_scholarships)} active scholarships")
         
         # Apply matching algorithms to active scholarships only
         matched_scholarships = []
@@ -168,11 +176,13 @@ class ScholarshipMatcherTool(BaseTool):
                     final_scholarships.append(scholarship)
                 else:
                     print(f"Final filter: Excluded expired scholarship '{scholarship.get('name')}' (deadline: {deadline_str})")
+                    logger.debug(f"Final filter: Excluded expired scholarship '{scholarship.get('name')}' (deadline: {deadline_str})")
             else:
                 # No deadline specified (or was "Unknown Deadline"), include it
                 final_scholarships.append(scholarship)
         
         print(f"💾 Saving {len(final_scholarships)} scholarships to database")
+        logger.info(f"💾 Saving {len(final_scholarships)} scholarships to database")
         self._save_scholarships_to_database(user_id, final_scholarships)
         
         return self._format_matching_output(user_id, matched_scholarships, matching_mode)
@@ -236,22 +246,27 @@ class ScholarshipMatcherTool(BaseTool):
         # DEBUG: Check types before processing
         eligible_majors_raw = scholarship.get('eligible_majors', [])
         print(f"DEBUG Line 234: eligible_majors type={type(eligible_majors_raw)}, value={eligible_majors_raw}")
+        logger.debug(f"eligible_majors type={type(eligible_majors_raw)}, value={eligible_majors_raw}")
         if not isinstance(eligible_majors_raw, list):
             print(f"ERROR: eligible_majors is not a list! Type: {type(eligible_majors_raw)}, Value: {eligible_majors_raw}")
+            logger.error(f"eligible_majors is not a list! Type: {type(eligible_majors_raw)}, Value: {eligible_majors_raw}")
             raise TypeError(f"eligible_majors must be a list, got {type(eligible_majors_raw)}: {eligible_majors_raw}")
         
         scholarship_fields = [f.lower() for f in eligible_majors_raw]
         
         field_keywords_raw = scholarship.get('field_keywords', [])
         print(f"DEBUG Line 235: field_keywords type={type(field_keywords_raw)}, value={field_keywords_raw}")
+        logger.debug(f"field_keywords type={type(field_keywords_raw)}, value={field_keywords_raw}")
         if not isinstance(field_keywords_raw, list):
             print(f"ERROR: field_keywords is not a list! Type: {type(field_keywords_raw)}, Value: {field_keywords_raw}")
+            logger.error(f"field_keywords is not a list! Type: {type(field_keywords_raw)}, Value: {field_keywords_raw}")
             raise TypeError(f"field_keywords must be a list, got {type(field_keywords_raw)}: {field_keywords_raw}")
         
         scholarship_keywords = field_keywords_raw
         
         if scholarship_fields or scholarship_keywords:
             print(f"DEBUG Line 238: Checking if any field in {scholarship_fields} or keyword in {scholarship_keywords}")
+            logger.debug(f"Checking if any field in {scholarship_fields} or keyword in {scholarship_keywords}")
             if any(field in user_major for field in scholarship_fields) or \
                any(keyword.lower() in user_major for keyword in scholarship_keywords):
                 match_score += major_weight
@@ -259,6 +274,7 @@ class ScholarshipMatcherTool(BaseTool):
             else:
                 # Check for related fields (near miss)
                 print(f"DEBUG Line 245: Combining {scholarship_fields} + {scholarship_keywords}")
+                logger.debug(f"Combining {scholarship_fields} + {scholarship_keywords}")
                 related_match = self._check_related_majors(user_major, scholarship_fields + scholarship_keywords)
                 if related_match:
                     match_score += major_weight * 0.6
@@ -354,8 +370,10 @@ class ScholarshipMatcherTool(BaseTool):
         
         demographic_requirements_raw = scholarship.get('demographic_requirements', [])
         print(f"DEBUG Line 355: demographic_requirements type={type(demographic_requirements_raw)}, value={demographic_requirements_raw}")
+        logger.debug(f"demographic_requirements type={type(demographic_requirements_raw)}, value={demographic_requirements_raw}")
         if not isinstance(demographic_requirements_raw, list):
             print(f"ERROR: demographic_requirements is not a list! Type: {type(demographic_requirements_raw)}, Value: {demographic_requirements_raw}")
+            logger.error(f"demographic_requirements is not a list! Type: {type(demographic_requirements_raw)}, Value: {demographic_requirements_raw}")
             raise TypeError(f"demographic_requirements must be a list, got {type(demographic_requirements_raw)}: {demographic_requirements_raw}")
         
         scholarship_demographics = demographic_requirements_raw
@@ -380,6 +398,7 @@ class ScholarshipMatcherTool(BaseTool):
             
             # Check each scholarship demographic requirement
             print(f"DEBUG Line 372: Iterating over scholarship_demographics: {scholarship_demographics}")
+            logger.debug(f"Iterating over scholarship_demographics: {scholarship_demographics}")
             for demo_req in scholarship_demographics:
                 demo_req_lower = demo_req.lower()
                 
@@ -442,8 +461,10 @@ class ScholarshipMatcherTool(BaseTool):
         # Extract location data from user preferences JSONB (already loaded above)
         location_restrictions_raw = scholarship.get('location_restrictions', [])
         print(f"DEBUG Line 440: location_restrictions type={type(location_restrictions_raw)}, value={location_restrictions_raw}")
+        logger.debug(f"location_restrictions type={type(location_restrictions_raw)}, value={location_restrictions_raw}")
         if not isinstance(location_restrictions_raw, list):
             print(f"ERROR: location_restrictions is not a list! Type: {type(location_restrictions_raw)}, Value: {location_restrictions_raw}")
+            logger.error(f"location_restrictions is not a list! Type: {type(location_restrictions_raw)}, Value: {location_restrictions_raw}")
             raise TypeError(f"location_restrictions must be a list, got {type(location_restrictions_raw)}: {location_restrictions_raw}")
         
         scholarship_location = location_restrictions_raw
@@ -971,6 +992,7 @@ for future retrieval and detailed scholarship recommendation explanations.
         
         if get_supabase is None:
             print("Warning: Cannot save to database - Supabase client not available")
+            logger.warning("Cannot save to database - Supabase client not available")
             return
         
         try:
@@ -1027,28 +1049,35 @@ for future retrieval and detailed scholarship recommendation explanations.
                 # Check for duplicates within new records
                 normalized_name = self._normalize_scholarship_name(record['name'])
                 print(f"DEBUG: Processing scholarship '{record['name']}' with normalized name '{normalized_name}'")
+                logger.debug(f"Processing scholarship '{record['name']}' with normalized name '{normalized_name}'")
                 
                 if normalized_name not in new_normalized_names:
                     new_normalized_names.add(normalized_name)
                     records_to_insert.append(record)
                     print(f"DEBUG: Added to insertion list: '{record['name']}'")
+                    logger.debug(f"Added to insertion list: '{record['name']}'")
                 else:
                     print(f"Skipped duplicate within new records: '{record['name']}'")
+                    logger.debug(f"Skipped duplicate within new records: '{record['name']}'")
             
             # Step 4: Delete existing duplicates before inserting new records
             for record in records_to_insert:
                 normalized_name = self._normalize_scholarship_name(record['name'])
                 print(f"DEBUG: Checking for existing duplicates of '{record['name']}' (normalized: '{normalized_name}')")
+                logger.debug(f"Checking for existing duplicates of '{record['name']}' (normalized: '{normalized_name}')")
                 
                 if normalized_name in existing_by_normalized:
                     print(f"DEBUG: Found {len(existing_by_normalized[normalized_name])} existing duplicate(s)")
+                    logger.debug(f"Found {len(existing_by_normalized[normalized_name])} existing duplicate(s)")
                     for existing in existing_by_normalized[normalized_name]:
                         supabase.table('scholarship_results').delete().eq(
                             'id', existing['id']
                         ).execute()
                         print(f"Deleted existing duplicate: '{existing['name']}' (id: {existing['id']})")
+                        logger.debug(f"Deleted existing duplicate: '{existing['name']}' (id: {existing['id']})")
                 else:
                     print(f"DEBUG: No existing duplicates found for '{record['name']}'")
+                    logger.debug(f"No existing duplicates found for '{record['name']}'")
             
             # Step 5: Insert all new records
             if records_to_insert:
@@ -1057,11 +1086,14 @@ for future retrieval and detailed scholarship recommendation explanations.
                 ).execute()
                 
                 print(f"Saved {len(records_to_insert)} unique scholarships to database for user {user_id}")
+                logger.info(f"Saved {len(records_to_insert)} unique scholarships to database for user {user_id}")
             else:
                 print(f"No new scholarships to save for user {user_id}")
+                logger.info(f"No new scholarships to save for user {user_id}")
                 
         except Exception as e:
             print(f"Error saving scholarships to database: {str(e)}")
+            logger.error(f"Error saving scholarships to database: {str(e)}")
 
     def _normalize_scholarship_name(self, name: str) -> str:
         """
@@ -1211,6 +1243,7 @@ for future retrieval and detailed scholarship recommendation explanations.
             
         except Exception as e:
             print(f"Error retrieving existing scholarships: {str(e)}")
+            logger.error(f"Error retrieving existing scholarships: {str(e)}")
             return []
 
     def _extract_real_scholarship_data(self, scholarship: Dict[str, Any]) -> Dict[str, Any]:
@@ -1444,17 +1477,21 @@ for future retrieval and detailed scholarship recommendation explanations.
                         active_scholarships.append(scholarship)
                     else:
                         print(f"Filtered out expired scholarship: {scholarship.get('name', 'Unknown')} (deadline: {deadline_str})")
+                        logger.debug(f"Filtered out expired scholarship: {scholarship.get('name', 'Unknown')} (deadline: {deadline_str})")
                         
                 except Exception as e:
                     print(f"Error parsing deadline for scholarship {scholarship.get('name', 'Unknown')}: {str(e)}")
+                    logger.warning(f"Error parsing deadline for scholarship {scholarship.get('name', 'Unknown')}: {str(e)}")
                     # Include scholarship with unknown status if deadline parsing fails
                     scholarship['deadline_status'] = 'Unknown Deadline Format'
                     active_scholarships.append(scholarship)
             
             print(f"Deadline filtering: {len(scholarships_data)} total -> {len(active_scholarships)} active scholarships")
+            logger.info(f"Deadline filtering: {len(scholarships_data)} total -> {len(active_scholarships)} active scholarships")
             return active_scholarships
             
         except Exception as e:
             print(f"Error in deadline filtering: {str(e)}")
+            logger.error(f"Error in deadline filtering: {str(e)}")
             # Return original list if filtering fails
             return scholarships_data

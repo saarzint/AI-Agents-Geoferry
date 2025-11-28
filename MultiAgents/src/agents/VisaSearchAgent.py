@@ -1,0 +1,37 @@
+from ..imports import *
+
+def visa_search_agent(self) -> Agent:
+    config = self.agents_config['visa_search_agent'].copy() # type: ignore[index]
+    # Fix: Strip newlines from role name to ensure proper delegation matching
+    if 'role' in config:
+        config['role'] = config['role'].strip()
+    return Agent(
+        config=config,
+        tools=[
+            ProfileAccessTool(),           # Gets user profile from Supabase
+            TavilySearchTool(             # AI-powered web search for visa discovery
+                search_depth="advanced",
+                max_results=8,
+                include_answer=True,
+                topic="general",
+                # # include_domains should be general for searching for visa information. Any embassy or government website should be included.
+                # include_domains=[
+                #     "usembassy.gov", "state.gov", "gov.uk", "immigration.gov.au", "canada.ca/ircc",
+                #     "uk.embassy.gov.au", "uk.gov.au", "uk.gov.uk", "uk.gov.uk/immigration", "uk.gov.uk/visa", "uk.gov.uk/visa/student", "uk.gov.uk/visa/student/requirements", "uk.gov.uk/visa/student/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/requirements/general/visa-types/f-1/requirements/general/requirements/general/requirements/general", "uk.gov.uk/visa/student/",
+                # ],
+                include_domains=[
+                    "usembassy.gov",
+                    "state.gov",
+                    "gov.uk",
+                    "immigration.gov.au",
+                    "canada.ca/ircc",
+                    "uk.embassy.gov.au",
+                    "uk.gov.au"
+                ],
+                max_tokens=10000,
+            ),
+            VisaScraperTool(),
+        ],
+        verbose=True,
+        allow_delegation=False  # Specialist agent - cannot delegate to others
+    )

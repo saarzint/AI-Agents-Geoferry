@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify  # type: ignore
 from http import HTTPStatus
 import json
 import sys
@@ -12,9 +12,9 @@ import requests
 
 from app.checklist_formatter import to_json_with_labels, to_markdown
 
-# Add agents module to path
-agents_path = os.path.join(os.path.dirname(__file__), '..', 'agents', 'src')
-sys.path.append(os.path.abspath(agents_path))
+# Add MultiAgents directory to path to enable package imports
+# multiagents_path = os.path.join(os.path.dirname(__file__), '..', 'MultiAgents')
+# sys.path.insert(0, os.path.abspath(multiagents_path))
 
 def _validate_user_exists(user_profile_id: int) -> tuple[bool, dict]:
 	"""
@@ -113,7 +113,7 @@ def register_routes(app: Flask) -> None:
 			
 			# Execute CrewAI agent and store results
 			try:
-				from agents.crew import SearchCrew
+				from MultiAgents.src.crews import SearchCrew
 				# Use user-provided search_request if available, else fallback to default
 				search_request = payload.get("search_request", "Find universities that match my profile")
 				# Run the agent with retry loop for invalid JSON
@@ -282,11 +282,17 @@ def register_routes(app: Flask) -> None:
 					"results_endpoint": f"/results/{user_profile_id}"
 				}), HTTPStatus.OK
 				
-			except ImportError:
+			except ImportError as import_err:
+				import traceback
+				error_trace = traceback.format_exc()
+				print(f"ImportError in search_universities: {str(import_err)}")
+				print(f"Full traceback:\n{error_trace}")
 				return jsonify({
 					"error": "CrewAI agents not available",
 					"search_id": search_id,
-					"message": "Search logged but agent processing failed"
+					"message": "Search logged but agent processing failed",
+					"import_error": str(import_err),
+					"traceback": error_trace
 				}), HTTPStatus.INTERNAL_SERVER_ERROR
 			except Exception as e:
 				return jsonify({
@@ -373,7 +379,7 @@ def register_routes(app: Flask) -> None:
 			# This eliminates the complex delta vs full search distinction that was causing duplicates
 			# Execute Scholarship Search Agent
 			try:
-				from agents.crew import SearchCrew
+				from MultiAgents.src.crews import SearchCrew
 				
 				# UNIFIED APPROACH: Always use comprehensive 'full' search logic
 				# Whether triggered manually or by profile changes, same comprehensive behavior:
@@ -687,7 +693,7 @@ def register_routes(app: Flask) -> None:
 			# Attempt to run Visa Agent if available
 			agent_used = False
 			try:
-				from agents.crew import SearchCrew
+				from MultiAgents.src.crews import SearchCrew
 				crew = SearchCrew()
 				print("Crew created")
 				print("=" * 60)
@@ -835,7 +841,7 @@ def register_routes(app: Flask) -> None:
 			agent_used = False
 			if refresh:
 				try:
-					from agents.crew import SearchCrew
+					from MultiAgents.src.crews import SearchCrew
 					crew = SearchCrew()
 					visa_task_getter = getattr(crew, 'visa_search_task', None)
 					visa_agent_getter = getattr(crew, 'visa_search_agent', None)
@@ -1131,7 +1137,7 @@ def register_routes(app: Flask) -> None:
 					print(f"[WARN] Failed to update user_profile before agent run: {e}")
 			
 			try:
-				from agents.crew import SearchCrew
+				from MultiAgents.src.crews import SearchCrew
 				crew = SearchCrew()
 				
 				app_req_task = crew.application_requirement_task()
@@ -1326,7 +1332,7 @@ def register_routes(app: Flask) -> None:
 
 			if is_stale:
 				try:
-					from agents.crew import SearchCrew
+					from MultiAgents.src.crews import SearchCrew
 					crew = SearchCrew()
 					req_agent = crew.application_requirement_agent()
 					result = req_agent.get_requirements(
@@ -1430,7 +1436,7 @@ def register_routes(app: Flask) -> None:
 			
 			# Execute Admissions Counselor Agent with HIERARCHICAL ORCHESTRATION
 			try:
-				from agents.crew import ManagerCrew
+				from MultiAgents.src.crews import ManagerCrew
 				
 				# Use ManagerCrew which has hierarchical process built-in
 				manager_crew_instance = ManagerCrew()
@@ -1579,7 +1585,7 @@ def register_routes(app: Flask) -> None:
 			
 			# Execute Next Steps Generator Agent using SearchCrew
 			try:
-				from agents.crew import SearchCrew
+				from MultiAgents.src.crews import SearchCrew
 				from crewai import Crew, Process
 				
 				# Create SearchCrew instance

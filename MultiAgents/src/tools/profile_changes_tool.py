@@ -3,6 +3,10 @@ from typing import Type, Optional
 from pydantic import BaseModel, Field
 import sys
 import os
+import logging
+
+# Set up logger for this module
+logger = logging.getLogger(__name__)
 
 # Add the app directory to the Python path to import supabase_client
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', 'app'))
@@ -11,6 +15,7 @@ try:
     from supabase_client import get_supabase
 except ImportError:
     print("Warning: Could not import supabase_client. Make sure the app module is in the Python path.")
+    logger.warning("Could not import supabase_client. Make sure the app module is in the Python path.")
     get_supabase = None
 
 
@@ -52,6 +57,7 @@ class ProfileChangesTool(BaseTool):
             supabase = get_supabase()
             
             print(f"ProfileChangesTool: Querying changes for user {user_id} (limit: {limit})")
+            logger.info(f"ProfileChangesTool: Querying changes for user {user_id} (limit: {limit})")
             
             # Query user_profile_changes table
             query = supabase.table('user_profile_changes').select(
@@ -82,6 +88,7 @@ class ProfileChangesTool(BaseTool):
         except Exception as e:
             error_msg = f"Error querying profile changes: {str(e)}"
             print(f"ProfileChangesTool Error: {error_msg}")
+            logger.error(f"ProfileChangesTool Error: {error_msg}")
             return error_msg
     
     def _format_changes_output(self, user_id: int, changes: list) -> str:

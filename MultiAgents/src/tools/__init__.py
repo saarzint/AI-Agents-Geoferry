@@ -12,4 +12,18 @@ from .admissions_data_tool import AdmissionsDataTool
 from .stage_computation_tool import StageComputationTool
 from .openai_web_search_tool import OpenAIWebSearchTool
 
-__all__ = ['ProfileQueryTool', 'ProfileChangesTool', 'UniversityKnowledgeTool', 'ScholarshipMatcherTool', 'ScholarshipKnowledgeTool', 'ProfileAccessTool', 'VisaScraperTool', 'ProfileRequestParsingTool', 'WebDataRetrievalTool', 'ApplicationDataExtractionTool', 'AdmissionsDataTool', 'StageComputationTool', 'OpenAIWebSearchTool']
+__all__ = [
+    'ProfileQueryTool', 
+    'ProfileChangesTool', 
+    'UniversityKnowledgeTool', 
+    'ScholarshipMatcherTool', 
+    'ScholarshipKnowledgeTool', 
+    'ProfileAccessTool', 
+    'VisaScraperTool', 
+    'ProfileRequestParsingTool', 
+    'WebDataRetrievalTool', 
+    'ApplicationDataExtractionTool', 
+    'AdmissionsDataTool', 
+    'StageComputationTool', 
+    'OpenAIWebSearchTool'
+    ]

@@ -1,17 +1,19 @@
 from crewai.tools import BaseTool
 from typing import Type, Dict, Any, Optional, List
 from pydantic import BaseModel, Field
+import json, traceback, contextlib
 import sys
 import os
+import logging
+
+# Set up logger for this module
+logger = logging.getLogger(__name__)
 
 # Add the app directory to the Python path to import supabase_client
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', 'app'))
+from supabase_client import get_supabase
+sys.path.remove(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', 'app'))
 
-try:
-    from supabase_client import get_supabase
-except ImportError:
-    print("Warning: Could not import supabase_client. Make sure the app module is in the Python path.")
-    get_supabase = None
 
 
 class ProfileQueryInput(BaseModel):
@@ -41,18 +43,19 @@ class ProfileQueryTool(BaseTool):
         """
         
         # Handle case where all params come as a single argument
-        if len(kwargs) == 1 and isinstance(list(kwargs.values())[0], str):
-            # If we get a single string parameter, try to parse it as user_id
-            try:
-                single_value = list(kwargs.values())[0]
-                # Try to extract user_id from the string
-                if single_value.isdigit():
-                    return self._execute_query(user_id=int(single_value))
-                else:
-                    return f"Error: Expected user_id as integer, got: {single_value}"
-            except Exception as e:
-                return f"Error parsing tool input: {str(e)}"
+        try:
+            if 'user_id' not in kwargs and len(kwargs) == 1:
+                potential_id = list(kwargs.values())[0]
+                if isinstance(potential_id, (str, int)) and potential_id.isdigit():
+                    kwargs = {'user_id': int(potential_id)}     
+            user_id: Optional[int] = kwargs.get('user_id')
+            if user_id is None:
+                return json.dumps({"error": "user_id is required"})
+        except Exception as e:
+            return json.dumps({"error": f"Error parsing tool input: {str(e)}"})
         
+        if not get_supabase():
+            return "Error: Supabase client not available. Please check your configuration."
         # Normal parameter handling
         return self._execute_query(**kwargs)
     
@@ -87,18 +90,15 @@ class ProfileQueryTool(BaseTool):
         try:
             debug_info = f"ProfileQueryTool Debug - Input types: user_id={type(user_id)} ({user_id}), include_preferences={type(include_preferences)} ({include_preferences})"
             print(debug_info)
+            logger.debug(debug_info)
         except Exception as debug_e:
             print(f"Debug logging failed: {debug_e}")
-        
-        if get_supabase is None:
-            return "Error: Supabase client not available. Please check your configuration."
+            logger.error(f"Debug logging failed: {debug_e}")
         
         try:
             supabase = get_supabase()
-            
             # Build the query
             query = supabase.table('user_profile').select('*')
-            
             if user_id:
                 query = query.eq('id', user_id)
             
@@ -161,7 +161,15 @@ class ProfileQueryTool(BaseTool):
                 'financial_aid_eligibility': profile.get('financial_aid_eligibility', False),
                 'budget': profile.get('budget'),
                 'created_at': profile.get('created_at'),
-                'updated_at': profile.get('updated_at')
+                'updated_at': profile.get('updated_at'),
+                'test_scores': profile.get('test_scores'),
+                'extracurriculars': profile.get('extracurriculars'),
+                'preferences': profile.get('preferences'),
+                'academic_background': profile.get('academic_background'),
+                'citizenship_country': profile.get('citizenship_country'),
+                'destination_country': profile.get('destination_country'),
+                'citizenship': profile.get('citizenship'),
+                'destination': profile.get('destination'),
             }
         except AttributeError as e:
             raise AttributeError(f"Error accessing profile fields. Profile type: {type(profile)}, Error: {str(e)}")
@@ -192,6 +200,10 @@ USER PROFILE (ID: {profile['id']})
 
 Basic Information:
 - Name: {profile['full_name']}
+- Citizenship Country: {profile['citizenship_country'] if profile['citizenship_country'] else 'Not specified'}
+- Destination Country: {profile['destination_country'] if profile['destination_country'] else 'Not specified'}
+- Citizenship: {profile['citizenship'] if profile['citizenship'] else 'Not specified'}
+- Destination: {profile['destination'] if profile['destination'] else 'Not specified'}
 - GPA: {profile['gpa'] if profile['gpa'] else 'Not provided'}
 - Intended Major: {profile['intended_major'] if profile['intended_major'] else 'Not specified'}
 
