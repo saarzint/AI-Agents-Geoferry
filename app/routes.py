@@ -9,6 +9,7 @@ from .supabase_client import get_supabase
 from .utils import _generate_visa_report, _generate_html_report, _detect_visa_changes
 
 import requests
+import stripe
 
 from app.checklist_formatter import to_json_with_labels, to_markdown
 
@@ -41,6 +42,11 @@ def _validate_user_exists(user_profile_id: int) -> tuple[bool, dict]:
 		}
 
 def register_routes(app: Flask) -> None:
+	# Handle CORS preflight requests explicitly
+	@app.options("/<path:path>")
+	def options_handler(path):
+		return "", 200
+	
 	@app.get("/")
 	def home():
 		return jsonify({
@@ -62,7 +68,12 @@ def register_routes(app: Flask) -> None:
 				"admissions_summary": "/admissions/summary/<user_id>",
 				"admissions_next_steps": "/admissions/next_steps/<user_id>",
 				"update_admissions_stage": "/admissions/update_stage",
-				"log_agent_report": "/admissions/log_agent_report"
+				"log_agent_report": "/admissions/log_agent_report",
+				"stripe_create_payment_intent": "/stripe/create-payment-intent",
+				"stripe_create_subscription": "/stripe/create-subscription",
+				"stripe_get_subscription": "/stripe/subscription/<user_profile_id>",
+				"stripe_webhook": "/stripe/webhook",
+				"stripe_cancel_subscription": "/stripe/cancel-subscription"
 			}
 		}), HTTPStatus.OK
 	
@@ -1831,5 +1842,360 @@ def register_routes(app: Flask) -> None:
 				status=HTTPStatus.ACCEPTED,
 				mimetype='application/json'
 			)
+		except Exception as exc:
+			return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
+
+	# =======================================================
+	# Stripe Payment Endpoints
+	# =======================================================
+
+	@app.post("/stripe/create-payment-intent")
+	def create_payment_intent():
+		"""
+		Create a Stripe Payment Intent for one-time payments.
+		
+		POST /stripe/create-payment-intent
+		Body: {
+			"amount": 2000,  # Amount in cents (e.g., 2000 = $20.00)
+			"currency": "usd",
+			"user_profile_id": 1,
+			"metadata": {}  # Optional metadata
+		}
+		"""
+		try:
+			payload = request.get_json(silent=True) or {}
+			amount = payload.get("amount")
+			currency = payload.get("currency", "usd")
+			user_profile_id = payload.get("user_profile_id")
+			metadata = payload.get("metadata", {})
+			
+			if not amount or amount <= 0:
+				return jsonify({"error": "Valid amount is required (in cents)"}), HTTPStatus.BAD_REQUEST
+			
+			if not user_profile_id:
+				return jsonify({"error": "user_profile_id is required"}), HTTPStatus.BAD_REQUEST
+			
+			# Validate user exists
+			user_exists, error_response = _validate_user_exists(user_profile_id)
+			if not user_exists:
+				return jsonify(error_response), HTTPStatus.NOT_FOUND
+			
+			# Initialize Stripe
+			stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+			if not stripe.api_key:
+				return jsonify({"error": "Stripe secret key not configured"}), HTTPStatus.INTERNAL_SERVER_ERROR
+			
+			# Create Payment Intent
+			payment_intent = stripe.PaymentIntent.create(
+				amount=int(amount),
+				currency=currency.lower(),
+				metadata={
+					"user_profile_id": str(user_profile_id),
+					**metadata
+				},
+				automatic_payment_methods={
+					"enabled": True,
+				},
+			)
+			
+			return jsonify({
+				"client_secret": payment_intent.client_secret,
+				"payment_intent_id": payment_intent.id,
+				"amount": payment_intent.amount,
+				"currency": payment_intent.currency
+			}), HTTPStatus.OK
+			
+		except stripe.error.StripeError as e:
+			return jsonify({"error": f"Stripe error: {str(e)}"}), HTTPStatus.BAD_REQUEST
+		except Exception as exc:
+			return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
+
+	@app.post("/stripe/create-subscription")
+	def create_subscription():
+		"""
+		Create a Stripe Subscription for recurring payments.
+		
+		POST /stripe/create-subscription
+		Body: {
+			"price_id": "price_xxxxx",  # Stripe Price ID
+			"user_profile_id": 1,
+			"payment_method_id": "pm_xxxxx"  # Optional, can be set later
+		}
+		"""
+		try:
+			payload = request.get_json(silent=True) or {}
+			price_id = payload.get("price_id")
+			user_profile_id = payload.get("user_profile_id")
+			payment_method_id = payload.get("payment_method_id")
+			
+			if not price_id:
+				return jsonify({"error": "price_id is required"}), HTTPStatus.BAD_REQUEST
+			
+			if not user_profile_id:
+				return jsonify({"error": "user_profile_id is required"}), HTTPStatus.BAD_REQUEST
+			
+			# Validate user exists
+			user_exists, error_response = _validate_user_exists(user_profile_id)
+			if not user_exists:
+				return jsonify(error_response), HTTPStatus.NOT_FOUND
+			
+			# Initialize Stripe
+			stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+			if not stripe.api_key:
+				return jsonify({"error": "Stripe secret key not configured"}), HTTPStatus.INTERNAL_SERVER_ERROR
+			
+			# Get or create Stripe customer
+			supabase = get_supabase()
+			profile_resp = supabase.table("user_profile").select("email, stripe_customer_id").eq("id", user_profile_id).execute()
+			
+			if not profile_resp.data:
+				return jsonify({"error": f"User profile {user_profile_id} not found"}), HTTPStatus.NOT_FOUND
+			
+			user_email = profile_resp.data[0].get("email")
+			stripe_customer_id = profile_resp.data[0].get("stripe_customer_id")
+			
+			# Create customer if doesn't exist
+			if not stripe_customer_id:
+				customer = stripe.Customer.create(
+					email=user_email,
+					metadata={"user_profile_id": str(user_profile_id)}
+				)
+				stripe_customer_id = customer.id
+				
+				# Update user profile with Stripe customer ID
+				supabase.table("user_profile").update({"stripe_customer_id": stripe_customer_id}).eq("id", user_profile_id).execute()
+			
+			# Create subscription
+			subscription_data = {
+				"customer": stripe_customer_id,
+				"items": [{"price": price_id}],
+				"metadata": {"user_profile_id": str(user_profile_id)},
+				"expand": ["latest_invoice.payment_intent"]
+			}
+			
+			if payment_method_id:
+				subscription_data["default_payment_method"] = payment_method_id
+			
+			subscription = stripe.Subscription.create(**subscription_data)
+			
+			return jsonify({
+				"subscription_id": subscription.id,
+				"client_secret": subscription.latest_invoice.payment_intent.client_secret if subscription.latest_invoice.payment_intent else None,
+				"status": subscription.status,
+				"customer_id": stripe_customer_id
+			}), HTTPStatus.OK
+			
+		except stripe.error.StripeError as e:
+			return jsonify({"error": f"Stripe error: {str(e)}"}), HTTPStatus.BAD_REQUEST
+		except Exception as exc:
+			return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
+
+	@app.get("/stripe/subscription/<int:user_profile_id>")
+	def get_subscription(user_profile_id: int):
+		"""
+		Get subscription details for a user.
+		
+		GET /stripe/subscription/<user_profile_id>
+		"""
+		try:
+			# Validate user exists
+			user_exists, error_response = _validate_user_exists(user_profile_id)
+			if not user_exists:
+				return jsonify(error_response), HTTPStatus.NOT_FOUND
+			
+			# Get Stripe customer ID
+			supabase = get_supabase()
+			profile_resp = supabase.table("user_profile").select("stripe_customer_id").eq("id", user_profile_id).execute()
+			
+			if not profile_resp.data or not profile_resp.data[0].get("stripe_customer_id"):
+				return jsonify({"subscription": None, "message": "No Stripe customer found"}), HTTPStatus.OK
+			
+			stripe_customer_id = profile_resp.data[0]["stripe_customer_id"]
+			
+			# Initialize Stripe
+			stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+			if not stripe.api_key:
+				return jsonify({"error": "Stripe secret key not configured"}), HTTPStatus.INTERNAL_SERVER_ERROR
+			
+			# Get active subscriptions
+			subscriptions = stripe.Subscription.list(
+				customer=stripe_customer_id,
+				status="active",
+				limit=1
+			)
+			
+			if subscriptions.data:
+				subscription = subscriptions.data[0]
+				return jsonify({
+					"subscription_id": subscription.id,
+					"status": subscription.status,
+					"current_period_start": subscription.current_period_start,
+					"current_period_end": subscription.current_period_end,
+					"cancel_at_period_end": subscription.cancel_at_period_end,
+					"items": [{"price_id": item.price.id, "quantity": item.quantity} for item in subscription.items.data]
+				}), HTTPStatus.OK
+			else:
+				return jsonify({"subscription": None, "message": "No active subscription found"}), HTTPStatus.OK
+				
+		except stripe.error.StripeError as e:
+			return jsonify({"error": f"Stripe error: {str(e)}"}), HTTPStatus.BAD_REQUEST
+		except Exception as exc:
+			return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
+
+	@app.post("/stripe/webhook")
+	def stripe_webhook():
+		"""
+		Handle Stripe webhook events.
+		This endpoint should be configured in Stripe Dashboard with webhook signing secret.
+		
+		POST /stripe/webhook
+		"""
+		payload = request.get_data(as_text=True)
+		sig_header = request.headers.get("Stripe-Signature")
+		webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET")
+		
+		if not webhook_secret:
+			return jsonify({"error": "Webhook secret not configured"}), HTTPStatus.INTERNAL_SERVER_ERROR
+		
+		try:
+			event = stripe.Webhook.construct_event(
+				payload, sig_header, webhook_secret
+			)
+		except ValueError as e:
+			# Invalid payload
+			return jsonify({"error": "Invalid payload"}), HTTPStatus.BAD_REQUEST
+		except stripe.error.SignatureVerificationError as e:
+			# Invalid signature
+			return jsonify({"error": "Invalid signature"}), HTTPStatus.BAD_REQUEST
+		
+		# Handle the event
+		event_type = event["type"]
+		event_data = event["data"]["object"]
+		
+		try:
+			supabase = get_supabase()
+			
+			if event_type == "payment_intent.succeeded":
+				# Payment succeeded - update user records
+				user_profile_id = event_data.get("metadata", {}).get("user_profile_id")
+				if user_profile_id:
+					# Log payment success in database
+					supabase.table("payments").insert({
+						"user_profile_id": int(user_profile_id),
+						"stripe_payment_intent_id": event_data["id"],
+						"amount": event_data["amount"],
+						"currency": event_data["currency"],
+						"status": "succeeded",
+						"created_at": datetime.now().isoformat()
+					}).execute()
+					print(f"Payment succeeded for user {user_profile_id}")
+			
+			elif event_type == "payment_intent.payment_failed":
+				# Payment failed
+				user_profile_id = event_data.get("metadata", {}).get("user_profile_id")
+				if user_profile_id:
+					supabase.table("payments").insert({
+						"user_profile_id": int(user_profile_id),
+						"stripe_payment_intent_id": event_data["id"],
+						"amount": event_data["amount"],
+						"currency": event_data["currency"],
+						"status": "failed",
+						"failure_reason": event_data.get("last_payment_error", {}).get("message", "Unknown"),
+						"created_at": datetime.now().isoformat()
+					}).execute()
+					print(f"Payment failed for user {user_profile_id}")
+			
+			elif event_type == "customer.subscription.created":
+				# Subscription created
+				user_profile_id = event_data.get("metadata", {}).get("user_profile_id")
+				if user_profile_id:
+					print(f"Subscription created for user {user_profile_id}")
+			
+			elif event_type == "customer.subscription.updated":
+				# Subscription updated
+				user_profile_id = event_data.get("metadata", {}).get("user_profile_id")
+				if user_profile_id:
+					print(f"Subscription updated for user {user_profile_id}")
+			
+			elif event_type == "customer.subscription.deleted":
+				# Subscription cancelled
+				user_profile_id = event_data.get("metadata", {}).get("user_profile_id")
+				if user_profile_id:
+					print(f"Subscription cancelled for user {user_profile_id}")
+			
+			return jsonify({"status": "success"}), HTTPStatus.OK
+			
+		except Exception as exc:
+			print(f"Error processing webhook: {str(exc)}")
+			return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
+
+	@app.post("/stripe/cancel-subscription")
+	def cancel_subscription():
+		"""
+		Cancel a user's subscription.
+		
+		POST /stripe/cancel-subscription
+		Body: {
+			"user_profile_id": 1,
+			"immediately": false  # If true, cancel immediately; if false, cancel at period end
+		}
+		"""
+		try:
+			payload = request.get_json(silent=True) or {}
+			user_profile_id = payload.get("user_profile_id")
+			immediately = payload.get("immediately", False)
+			
+			if not user_profile_id:
+				return jsonify({"error": "user_profile_id is required"}), HTTPStatus.BAD_REQUEST
+			
+			# Validate user exists
+			user_exists, error_response = _validate_user_exists(user_profile_id)
+			if not user_exists:
+				return jsonify(error_response), HTTPStatus.NOT_FOUND
+			
+			# Get Stripe customer ID
+			supabase = get_supabase()
+			profile_resp = supabase.table("user_profile").select("stripe_customer_id").eq("id", user_profile_id).execute()
+			
+			if not profile_resp.data or not profile_resp.data[0].get("stripe_customer_id"):
+				return jsonify({"error": "No Stripe customer found"}), HTTPStatus.NOT_FOUND
+			
+			stripe_customer_id = profile_resp.data[0]["stripe_customer_id"]
+			
+			# Initialize Stripe
+			stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+			if not stripe.api_key:
+				return jsonify({"error": "Stripe secret key not configured"}), HTTPStatus.INTERNAL_SERVER_ERROR
+			
+			# Get active subscription
+			subscriptions = stripe.Subscription.list(
+				customer=stripe_customer_id,
+				status="active",
+				limit=1
+			)
+			
+			if not subscriptions.data:
+				return jsonify({"error": "No active subscription found"}), HTTPStatus.NOT_FOUND
+			
+			subscription_id = subscriptions.data[0].id
+			
+			# Cancel subscription
+			if immediately:
+				subscription = stripe.Subscription.delete(subscription_id)
+			else:
+				subscription = stripe.Subscription.modify(
+					subscription_id,
+					cancel_at_period_end=True
+				)
+			
+			return jsonify({
+				"subscription_id": subscription.id,
+				"status": subscription.status,
+				"cancel_at_period_end": subscription.cancel_at_period_end,
+				"canceled_at": subscription.canceled_at
+			}), HTTPStatus.OK
+			
+		except stripe.error.StripeError as e:
+			return jsonify({"error": f"Stripe error: {str(e)}"}), HTTPStatus.BAD_REQUEST
 		except Exception as exc:
 			return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
