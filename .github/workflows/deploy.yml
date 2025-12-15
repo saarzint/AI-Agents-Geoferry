@@ -1,14 +1,27 @@
-name: Deploy to GCP Cloud Run
+name: Deploy pgadmit (backend + frontend)
+
 on:
   push:
-    branches: [ main ]
+    branches:
+      - pgadmin-backend/testing
 
 jobs:
   build-deploy:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout code
+      - name: Checkout backend repo
         uses: actions/checkout@v3
+        with:
+          ref: pgadmin-backend/testing
+          path: backend
+
+      - name: Checkout frontend repo
+        uses: actions/checkout@v3
+        with:
+          repository: saarzint/pgadmin-frontend-app   # <-- change
+          ref: pgadmin/testing
+          path: backend/pgadmin-frontend-app
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -19,10 +32,20 @@ jobs:
         run: gcloud auth configure-docker europe-west1-docker.pkg.dev --quiet
 
       - name: Build Docker image
-        run: docker build -t europe-west1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/${{ secrets.GCP_REPO }}/${{ secrets.GCP_SERVICE }}:latest .
+        working-directory: backend
+        run: |
+          docker build \
+            -t europe-west1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/${{ secrets.GCP_REPO }}/${{ secrets.GCP_SERVICE }}:latest .
 
       - name: Push Docker image
-        run: docker push europe-west1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/${{ secrets.GCP_REPO }}/${{ secrets.GCP_SERVICE }}:latest
+        run: |
+          docker push \
+            europe-west1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/${{ secrets.GCP_REPO }}/${{ secrets.GCP_SERVICE }}:latest
 
       - name: Deploy to Cloud Run
-        run: gcloud run deploy ${{ secrets.GCP_SERVICE }} --image=europe-west1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/${{ secrets.GCP_REPO }}/${{ secrets.GCP_SERVICE }}:latest --region=${{ secrets.GCP_REGION }} --allow-unauthenticated --memory=8Gi --cpu=2
+        run: |
+          gcloud run deploy ${{ secrets.GCP_SERVICE }} \
+            --image=europe-west1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/${{ secrets.GCP_REPO }}/${{ secrets.GCP_SERVICE }}:latest \
+            --region=${{ secrets.GCP_REGION }} \
+            --allow-unauthenticated \
+            --memory=8Gi --cpu=2
