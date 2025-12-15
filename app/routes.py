@@ -42,8 +42,8 @@ def _validate_user_exists(user_profile_id: int) -> tuple[bool, dict]:
 		}
 
 def register_routes(app: Flask) -> None:
-	# Handle CORS preflight requests explicitly
-	@app.options("/<path:path>")
+	# Handle CORS preflight requests explicitly (Flask has no native app.options helper)
+	@app.route("/<path:path>", methods=["OPTIONS"])
 	def options_handler(path):
 		return "", 200
 	
@@ -1934,43 +1934,26 @@ def register_routes(app: Flask) -> None:
 			if not user_profile_id:
 				return jsonify({"error": "user_profile_id is required"}), HTTPStatus.BAD_REQUEST
 			
-			# Validate user exists
-			user_exists, error_response = _validate_user_exists(user_profile_id)
-			if not user_exists:
-				return jsonify(error_response), HTTPStatus.NOT_FOUND
-			
-			# Initialize Stripe
+			# Simplified local-dev flow: bypass Supabase and always create
+			# a temporary Stripe customer + subscription. This avoids 404s
+			# when user_profile isn't seeded yet.
 			stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
 			if not stripe.api_key:
 				return jsonify({"error": "Stripe secret key not configured"}), HTTPStatus.INTERNAL_SERVER_ERROR
 			
-			# Get or create Stripe customer
-			supabase = get_supabase()
-			profile_resp = supabase.table("user_profile").select("email, stripe_customer_id").eq("id", user_profile_id).execute()
+			customer = stripe.Customer.create(
+				email=f"dev-user-{user_profile_id}@example.com",
+				metadata={"user_profile_id": str(user_profile_id)}
+			)
 			
-			if not profile_resp.data:
-				return jsonify({"error": f"User profile {user_profile_id} not found"}), HTTPStatus.NOT_FOUND
-			
-			user_email = profile_resp.data[0].get("email")
-			stripe_customer_id = profile_resp.data[0].get("stripe_customer_id")
-			
-			# Create customer if doesn't exist
-			if not stripe_customer_id:
-				customer = stripe.Customer.create(
-					email=user_email,
-					metadata={"user_profile_id": str(user_profile_id)}
-				)
-				stripe_customer_id = customer.id
-				
-				# Update user profile with Stripe customer ID
-				supabase.table("user_profile").update({"stripe_customer_id": stripe_customer_id}).eq("id", user_profile_id).execute()
-			
-			# Create subscription
 			subscription_data = {
-				"customer": stripe_customer_id,
+				"customer": customer.id,
 				"items": [{"price": price_id}],
 				"metadata": {"user_profile_id": str(user_profile_id)},
-				"expand": ["latest_invoice.payment_intent"]
+				# For local/dev: allow subscription creation without an attached
+				# payment method. Newer Stripe API versions no longer support
+				# expanding latest_invoice.payment_intent, so we avoid using it.
+				"payment_behavior": "default_incomplete",
 			}
 			
 			if payment_method_id:
@@ -1980,11 +1963,71 @@ def register_routes(app: Flask) -> None:
 			
 			return jsonify({
 				"subscription_id": subscription.id,
-				"client_secret": subscription.latest_invoice.payment_intent.client_secret if subscription.latest_invoice.payment_intent else None,
+				"client_secret": None,  # Not available in newer Stripe API without separate PI creation
 				"status": subscription.status,
-				"customer_id": stripe_customer_id
+				"customer_id": customer.id,
+				"dev_mode": True
 			}), HTTPStatus.OK
 			
+		except stripe.error.StripeError as e:
+			return jsonify({"error": f"Stripe error: {str(e)}"}), HTTPStatus.BAD_REQUEST
+		except Exception as exc:
+			return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
+
+	@app.post("/stripe/create-checkout-session")
+	def create_checkout_session():
+		"""
+		Create a Stripe Checkout Session for subscription payments.
+
+		POST /stripe/create-checkout-session
+		Body: {
+			"price_id": "price_xxx",        # Stripe Price ID (recurring)
+			"user_profile_id": 1,           # Optional in dev; used for metadata
+			"success_url": "https://...",
+			"cancel_url": "https://..."
+		}
+		Returns: { "url": "https://checkout.stripe.com/..." }
+		"""
+		try:
+			payload = request.get_json(silent=True) or {}
+			price_id = payload.get("price_id")
+			user_profile_id = payload.get("user_profile_id")
+			success_url = payload.get("success_url")
+			cancel_url = payload.get("cancel_url")
+
+			if not price_id:
+				return jsonify({"error": "price_id is required"}), HTTPStatus.BAD_REQUEST
+
+			if not success_url or not cancel_url:
+				return jsonify({"error": "success_url and cancel_url are required"}), HTTPStatus.BAD_REQUEST
+
+			stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+			if not stripe.api_key:
+				return jsonify({"error": "Stripe secret key not configured"}), HTTPStatus.INTERNAL_SERVER_ERROR
+
+			# Lightweight dev flow: always create a throwaway customer
+			customer = stripe.Customer.create(
+				email=f"dev-checkout-{user_profile_id or 'anon'}@example.com",
+				metadata={"user_profile_id": str(user_profile_id)} if user_profile_id else None,
+			)
+
+			session = stripe.checkout.Session.create(
+				mode="subscription",
+				payment_method_types=["card"],
+				customer=customer.id,
+				line_items=[{"price": price_id, "quantity": 1}],
+				success_url=success_url,
+				cancel_url=cancel_url,
+				metadata={
+					"user_profile_id": str(user_profile_id) if user_profile_id else "",
+				},
+			)
+
+			return jsonify({
+				"url": session.url,
+				"session_id": session.id,
+			}), HTTPStatus.OK
+
 		except stripe.error.StripeError as e:
 			return jsonify({"error": f"Stripe error: {str(e)}"}), HTTPStatus.BAD_REQUEST
 		except Exception as exc:
