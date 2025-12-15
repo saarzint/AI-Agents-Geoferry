@@ -47,8 +47,9 @@ def register_routes(app: Flask) -> None:
 	def options_handler(path):
 		return "", 200
 	
-	@app.get("/")
-	def home():
+	# API index route – moved to /api so that "/" can serve the frontend SPA
+	@app.get("/api")
+	def api_index():
 		return jsonify({
 			"message": "Welcome to PG Admit - AI AGENTS",
 			"version": "1.0.0",
