@@ -76,9 +76,16 @@ def create_app() -> Flask:
 			return ("Not Found", 404)
 
 		# This is a frontend route - serve index.html for React Router
-		index_path = os.path.join(app.static_folder, "index.html")
-		if os.path.exists(index_path):
-			return send_from_directory(app.static_folder, "index.html")
+		# Check if static folder exists and has index.html
+		if app.static_folder:
+			index_path = os.path.join(app.static_folder, "index.html")
+			if os.path.exists(index_path):
+				return send_from_directory(app.static_folder, "index.html")
+			else:
+				# Log for debugging
+				print(f"Warning: index.html not found at {index_path}")
+				print(f"Static folder: {app.static_folder}")
+				print(f"Static folder exists: {os.path.exists(app.static_folder) if app.static_folder else 'N/A'}")
 
 		return ("Not Found", 404)
 	
