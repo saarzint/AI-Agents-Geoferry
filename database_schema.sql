@@ -200,7 +200,7 @@ create table if not exists public.visa_requirements (
     disclaimer text,
     alert_sent boolean default false,
     notes text,
-    change_summary jsonb,
+    change_summary jsonb
 );
 
 -- Useful indices
@@ -315,5 +315,125 @@ CREATE INDEX IF NOT EXISTS idx_agent_reports_log_agent ON public.agent_reports_l
 ALTER TABLE public.agent_reports_log ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Allow all on agent_reports_log"
     ON public.agent_reports_log
+    FOR ALL
+    USING (TRUE);
+
+-- ===========================
+-- PAYMENT & SUBSCRIPTION MANAGEMENT
+-- ===========================
+
+-- Add Firebase UID and Stripe Customer ID to user_profile
+ALTER TABLE public.user_profile
+ADD COLUMN IF NOT EXISTS firebase_uid TEXT UNIQUE;
+
+ALTER TABLE public.user_profile
+ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT UNIQUE;
+
+-- Create index for Firebase UID lookups
+CREATE INDEX IF NOT EXISTS idx_user_profile_firebase_uid ON public.user_profile (firebase_uid);
+CREATE INDEX IF NOT EXISTS idx_user_profile_stripe_customer_id ON public.user_profile (stripe_customer_id);
+
+-- ===========================
+-- User Subscriptions Table
+-- ===========================
+CREATE TABLE IF NOT EXISTS public.user_subscriptions (
+    id SERIAL PRIMARY KEY,
+    user_profile_id INT NOT NULL REFERENCES public.user_profile(id) ON DELETE CASCADE,
+    stripe_subscription_id TEXT UNIQUE NOT NULL,
+    stripe_customer_id TEXT NOT NULL,
+    plan_id TEXT NOT NULL,                          -- e.g., 'starter', 'pro', 'team'
+    plan_name TEXT NOT NULL,                         -- e.g., 'Starter', 'Pro', 'Team'
+    price_id TEXT NOT NULL,                          -- Stripe Price ID
+    status TEXT NOT NULL,                            -- active, canceled, past_due, trialing, etc.
+    current_period_start TIMESTAMPTZ NOT NULL,
+    current_period_end TIMESTAMPTZ NOT NULL,
+    cancel_at_period_end BOOLEAN DEFAULT FALSE,
+    canceled_at TIMESTAMPTZ,
+    trial_start TIMESTAMPTZ,
+    trial_end TIMESTAMPTZ,
+    amount INTEGER NOT NULL,                         -- Amount in cents
+    currency TEXT NOT NULL DEFAULT 'usd',
+    interval TEXT NOT NULL,                          -- month, year
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Useful indices
+CREATE INDEX IF NOT EXISTS idx_user_subscriptions_user ON public.user_subscriptions (user_profile_id);
+CREATE INDEX IF NOT EXISTS idx_user_subscriptions_stripe_sub ON public.user_subscriptions (stripe_subscription_id);
+CREATE INDEX IF NOT EXISTS idx_user_subscriptions_status ON public.user_subscriptions (status);
+CREATE INDEX IF NOT EXISTS idx_user_subscriptions_active ON public.user_subscriptions (user_profile_id, status) WHERE status = 'active';
+
+-- Enable RLS + temporary open policy
+ALTER TABLE public.user_subscriptions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all on user_subscriptions"
+    ON public.user_subscriptions
+    FOR ALL
+    USING (TRUE);
+
+-- ===========================
+-- Payment Methods Table
+-- ===========================
+CREATE TABLE IF NOT EXISTS public.payment_methods (
+    id SERIAL PRIMARY KEY,
+    user_profile_id INT NOT NULL REFERENCES public.user_profile(id) ON DELETE CASCADE,
+    stripe_payment_method_id TEXT UNIQUE NOT NULL,
+    stripe_customer_id TEXT NOT NULL,
+    type TEXT NOT NULL,                              -- card, bank_account, etc.
+    card_brand TEXT,                                 -- visa, mastercard, amex, etc.
+    card_last4 TEXT,                                 -- Last 4 digits
+    card_exp_month INTEGER,
+    card_exp_year INTEGER,
+    is_default BOOLEAN DEFAULT FALSE,
+    billing_details JSONB DEFAULT '{}',              -- name, email, address, etc.
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Useful indices
+CREATE INDEX IF NOT EXISTS idx_payment_methods_user ON public.payment_methods (user_profile_id);
+CREATE INDEX IF NOT EXISTS idx_payment_methods_stripe_pm ON public.payment_methods (stripe_payment_method_id);
+CREATE INDEX IF NOT EXISTS idx_payment_methods_default ON public.payment_methods (user_profile_id, is_default) WHERE is_default = TRUE;
+
+-- Enable RLS + temporary open policy
+ALTER TABLE public.payment_methods ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all on payment_methods"
+    ON public.payment_methods
+    FOR ALL
+    USING (TRUE);
+
+-- ===========================
+-- Payment History Table
+-- ===========================
+CREATE TABLE IF NOT EXISTS public.payment_history (
+    id SERIAL PRIMARY KEY,
+    user_profile_id INT NOT NULL REFERENCES public.user_profile(id) ON DELETE CASCADE,
+    subscription_id INT REFERENCES public.user_subscriptions(id) ON DELETE SET NULL,
+    stripe_payment_intent_id TEXT UNIQUE,
+    stripe_invoice_id TEXT,
+    stripe_charge_id TEXT,
+    amount INTEGER NOT NULL,                         -- Amount in cents
+    currency TEXT NOT NULL DEFAULT 'usd',
+    status TEXT NOT NULL,                            -- succeeded, failed, pending, refunded
+    payment_method_id INT REFERENCES public.payment_methods(id) ON DELETE SET NULL,
+    description TEXT,
+    failure_reason TEXT,                             -- If payment failed
+    receipt_url TEXT,                                -- Stripe receipt URL
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Useful indices
+CREATE INDEX IF NOT EXISTS idx_payment_history_user ON public.payment_history (user_profile_id);
+CREATE INDEX IF NOT EXISTS idx_payment_history_subscription ON public.payment_history (subscription_id);
+CREATE INDEX IF NOT EXISTS idx_payment_history_stripe_pi ON public.payment_history (stripe_payment_intent_id);
+CREATE INDEX IF NOT EXISTS idx_payment_history_created ON public.payment_history (user_profile_id, created_at DESC);
+
+-- Enable RLS + temporary open policy
+ALTER TABLE public.payment_history ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all on payment_history"
+    ON public.payment_history
     FOR ALL
     USING (TRUE);

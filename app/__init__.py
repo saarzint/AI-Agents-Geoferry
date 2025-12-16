@@ -13,12 +13,12 @@ def create_app() -> Flask:
 		static_folder="static-frontend",  # populated by Docker multi-stage build
 		static_url_path="/",
 	)
-	# CORS configuration - allow Stripe webhooks (no origin check for webhooks)
-	# More permissive CORS for development
+	# CORS configuration - allow all origins since frontend/backend are in same container
+	# This allows the app to work with any domain (Cloud Run URL, custom domain, localhost)
 	CORS(app, 
 		resources={
 			r"/*": {
-				"origins": ["http://localhost:5173", "http://localhost:3000", "https://pgadmin-frontend-app.vercel.app"],
+				"origins": "*",  # Allow all origins - safe because frontend/backend are in same container
 				"methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"],
 				"allow_headers": ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
 				"expose_headers": ["Content-Type", "Authorization"],
@@ -45,27 +45,42 @@ def create_app() -> Flask:
 
 	# Optional SPA fallback so client-side routes work in production.
 	# This will serve index.html for non-API paths.
+	# Note: This route must be registered AFTER register_routes() to avoid catching API endpoints
+	# We'll register it at the end of the function
+
+	register_routes(app)
+	
+	# SPA fallback - register AFTER API routes so API routes take precedence
+	# This serves index.html for client-side routes (React Router)
 	@app.route("/<path:path>")
 	def spa_fallback(path: str):
+		# List of API route prefixes that should NOT serve index.html
 		api_prefixes = (
-			"api/",
-			"admissions/",
-			"results/",
-			"stripe/",
-			"visa",
+			"api",
+			"admissions",
+			"results",
+			"stripe",
+			"visa_info",
+			"visa_report",
+			"visa_alerts",
+			"search_universities",
+			"search_scholarships",
+			"fetch_application_requirements",
+			"application_requirements",
 			"health",
 		)
+		
+		# Check if this path starts with any API prefix
 		if any(path.startswith(prefix) for prefix in api_prefixes):
-			# Let real API routes / blueprints handle this path
+			# This is an API route - return 404 (should have been handled by register_routes)
 			return ("Not Found", 404)
 
+		# This is a frontend route - serve index.html for React Router
 		index_path = os.path.join(app.static_folder, "index.html")
 		if os.path.exists(index_path):
 			return send_from_directory(app.static_folder, "index.html")
 
 		return ("Not Found", 404)
-
-	register_routes(app)
 	
 	# Start profile change listener (simple polling)
 	if os.getenv("ENABLE_PROFILE_LISTENER", "true").lower() == "true":

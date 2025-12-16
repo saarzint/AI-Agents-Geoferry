@@ -73,6 +73,9 @@ def register_routes(app: Flask) -> None:
 				"stripe_create_payment_intent": "/stripe/create-payment-intent",
 				"stripe_create_subscription": "/stripe/create-subscription",
 				"stripe_get_subscription": "/stripe/subscription/<user_profile_id>",
+				"stripe_get_payment_methods": "/stripe/payment-methods/<user_profile_id>",
+				"stripe_get_payment_history": "/stripe/payment-history/<user_profile_id>",
+				"stripe_get_billing_info": "/stripe/billing-info/<user_profile_id>",
 				"stripe_webhook": "/stripe/webhook",
 				"stripe_cancel_subscription": "/stripe/cancel-subscription"
 			}
@@ -2006,16 +2009,48 @@ def register_routes(app: Flask) -> None:
 			if not stripe.api_key:
 				return jsonify({"error": "Stripe secret key not configured"}), HTTPStatus.INTERNAL_SERVER_ERROR
 
-			# Lightweight dev flow: always create a throwaway customer
-			customer = stripe.Customer.create(
-				email=f"dev-checkout-{user_profile_id or 'anon'}@example.com",
-				metadata={"user_profile_id": str(user_profile_id)} if user_profile_id else None,
-			)
+			supabase = get_supabase()
+			customer_id = None
+			
+			# Get or create Stripe customer
+			if user_profile_id:
+				# Check if user already has a Stripe customer ID
+				profile_resp = supabase.table("user_profile").select("stripe_customer_id, full_name").eq("id", user_profile_id).execute()
+				if profile_resp.data and profile_resp.data[0].get("stripe_customer_id"):
+					customer_id = profile_resp.data[0]["stripe_customer_id"]
+					# Verify customer exists in Stripe
+					try:
+						stripe.Customer.retrieve(customer_id)
+					except stripe.error.InvalidRequestError:
+						# Customer doesn't exist in Stripe, create new one
+						customer_id = None
+				
+				if not customer_id:
+					# Create new Stripe customer
+					user_name = profile_resp.data[0].get("full_name", "") if profile_resp.data else ""
+					customer = stripe.Customer.create(
+						email=f"user-{user_profile_id}@pgadmit.com",
+						name=user_name if user_name else None,
+						metadata={"user_profile_id": str(user_profile_id)},
+					)
+					customer_id = customer.id
+					
+					# Store customer ID in user_profile
+					supabase.table("user_profile").update({
+						"stripe_customer_id": customer_id
+					}).eq("id", user_profile_id).execute()
+			else:
+				# No user_profile_id, create temporary customer
+				customer = stripe.Customer.create(
+					email=f"dev-checkout-{user_profile_id or 'anon'}@example.com",
+					metadata={"user_profile_id": str(user_profile_id)} if user_profile_id else None,
+				)
+				customer_id = customer.id
 
 			session = stripe.checkout.Session.create(
 				mode="subscription",
 				payment_method_types=["card"],
-				customer=customer.id,
+				customer=customer_id,
 				line_items=[{"price": price_id, "quantity": 1}],
 				success_url=success_url,
 				cancel_url=cancel_url,
@@ -2037,7 +2072,7 @@ def register_routes(app: Flask) -> None:
 	@app.get("/stripe/subscription/<int:user_profile_id>")
 	def get_subscription(user_profile_id: int):
 		"""
-		Get subscription details for a user.
+		Get subscription details for a user from database.
 		
 		GET /stripe/subscription/<user_profile_id>
 		"""
@@ -2047,42 +2082,29 @@ def register_routes(app: Flask) -> None:
 			if not user_exists:
 				return jsonify(error_response), HTTPStatus.NOT_FOUND
 			
-			# Get Stripe customer ID
 			supabase = get_supabase()
-			profile_resp = supabase.table("user_profile").select("stripe_customer_id").eq("id", user_profile_id).execute()
 			
-			if not profile_resp.data or not profile_resp.data[0].get("stripe_customer_id"):
-				return jsonify({"subscription": None, "message": "No Stripe customer found"}), HTTPStatus.OK
+			# Get active subscription from database
+			subscription_resp = supabase.table("user_subscriptions").select("*").eq("user_profile_id", user_profile_id).eq("status", "active").order("created_at", desc=True).limit(1).execute()
 			
-			stripe_customer_id = profile_resp.data[0]["stripe_customer_id"]
-			
-			# Initialize Stripe
-			stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
-			if not stripe.api_key:
-				return jsonify({"error": "Stripe secret key not configured"}), HTTPStatus.INTERNAL_SERVER_ERROR
-			
-			# Get active subscriptions
-			subscriptions = stripe.Subscription.list(
-				customer=stripe_customer_id,
-				status="active",
-				limit=1
-			)
-			
-			if subscriptions.data:
-				subscription = subscriptions.data[0]
+			if subscription_resp.data and len(subscription_resp.data) > 0:
+				sub = subscription_resp.data[0]
 				return jsonify({
-					"subscription_id": subscription.id,
-					"status": subscription.status,
-					"current_period_start": subscription.current_period_start,
-					"current_period_end": subscription.current_period_end,
-					"cancel_at_period_end": subscription.cancel_at_period_end,
-					"items": [{"price_id": item.price.id, "quantity": item.quantity} for item in subscription.items.data]
+					"subscription_id": sub["stripe_subscription_id"],
+					"plan_id": sub["plan_id"],
+					"plan_name": sub["plan_name"],
+					"status": sub["status"],
+					"current_period_start": sub["current_period_start"],
+					"current_period_end": sub["current_period_end"],
+					"cancel_at_period_end": sub["cancel_at_period_end"],
+					"amount": sub["amount"],
+					"currency": sub["currency"],
+					"interval": sub["interval"],
+					"price_id": sub["price_id"]
 				}), HTTPStatus.OK
 			else:
 				return jsonify({"subscription": None, "message": "No active subscription found"}), HTTPStatus.OK
 				
-		except stripe.error.StripeError as e:
-			return jsonify({"error": f"Stripe error: {str(e)}"}), HTTPStatus.BAD_REQUEST
 		except Exception as exc:
 			return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
 
@@ -2120,17 +2142,32 @@ def register_routes(app: Flask) -> None:
 			supabase = get_supabase()
 			
 			if event_type == "payment_intent.succeeded":
-				# Payment succeeded - update user records
+				# Payment succeeded - log in payment_history
 				user_profile_id = event_data.get("metadata", {}).get("user_profile_id")
 				if user_profile_id:
-					# Log payment success in database
-					supabase.table("payments").insert({
+					# Get subscription if this payment is for a subscription
+					subscription_id = None
+					if event_data.get("invoice"):
+						invoice_id = event_data.get("invoice")
+						# Try to find subscription from invoice
+						try:
+							invoice = stripe.Invoice.retrieve(invoice_id)
+							if invoice.subscription:
+								sub_resp = supabase.table("user_subscriptions").select("id").eq("stripe_subscription_id", invoice.subscription).execute()
+								if sub_resp.data:
+									subscription_id = sub_resp.data[0]["id"]
+						except:
+							pass
+					
+					supabase.table("payment_history").insert({
 						"user_profile_id": int(user_profile_id),
+						"subscription_id": subscription_id,
 						"stripe_payment_intent_id": event_data["id"],
 						"amount": event_data["amount"],
 						"currency": event_data["currency"],
 						"status": "succeeded",
-						"created_at": datetime.now().isoformat()
+						"description": event_data.get("description"),
+						"receipt_url": event_data.get("charges", {}).get("data", [{}])[0].get("receipt_url") if event_data.get("charges") else None
 					}).execute()
 					print(f"Payment succeeded for user {user_profile_id}")
 			
@@ -2138,34 +2175,127 @@ def register_routes(app: Flask) -> None:
 				# Payment failed
 				user_profile_id = event_data.get("metadata", {}).get("user_profile_id")
 				if user_profile_id:
-					supabase.table("payments").insert({
+					supabase.table("payment_history").insert({
 						"user_profile_id": int(user_profile_id),
 						"stripe_payment_intent_id": event_data["id"],
 						"amount": event_data["amount"],
 						"currency": event_data["currency"],
 						"status": "failed",
-						"failure_reason": event_data.get("last_payment_error", {}).get("message", "Unknown"),
-						"created_at": datetime.now().isoformat()
+						"failure_reason": event_data.get("last_payment_error", {}).get("message", "Unknown")
 					}).execute()
 					print(f"Payment failed for user {user_profile_id}")
 			
 			elif event_type == "customer.subscription.created":
-				# Subscription created
+				# Subscription created - store in database
+				subscription_id = event_data["id"]
+				customer_id = event_data["customer"]
+				
+				# Get user_profile_id from customer metadata or lookup
 				user_profile_id = event_data.get("metadata", {}).get("user_profile_id")
+				if not user_profile_id:
+					# Try to get from customer
+					try:
+						customer = stripe.Customer.retrieve(customer_id)
+						user_profile_id = customer.metadata.get("user_profile_id")
+					except:
+						pass
+				
 				if user_profile_id:
+					# Get price details
+					price_id = event_data["items"]["data"][0]["price"]["id"]
+					price_obj = event_data["items"]["data"][0]["price"]
+					amount = price_obj["unit_amount"]
+					currency = price_obj["currency"]
+					interval = price_obj["recurring"]["interval"]
+					
+					# Determine plan_id from price_id (you may want to make this configurable)
+					plan_id = "starter"  # Default
+					plan_name = "Starter"  # Default
+					if "price_1SdCFdGMytl1afSZCgtVvtzF" in price_id:
+						plan_id = "pro"
+						plan_name = "Pro"
+					elif "price_1SdCFwGMytl1afSZtpoRPzhd" in price_id:
+						plan_id = "team"
+						plan_name = "Team"
+					
+					supabase.table("user_subscriptions").insert({
+						"user_profile_id": int(user_profile_id),
+						"stripe_subscription_id": subscription_id,
+						"stripe_customer_id": customer_id,
+						"plan_id": plan_id,
+						"plan_name": plan_name,
+						"price_id": price_id,
+						"status": event_data["status"],
+						"current_period_start": datetime.fromtimestamp(event_data["current_period_start"]).isoformat(),
+						"current_period_end": datetime.fromtimestamp(event_data["current_period_end"]).isoformat(),
+						"cancel_at_period_end": event_data.get("cancel_at_period_end", False),
+						"trial_start": datetime.fromtimestamp(event_data["trial_start"]).isoformat() if event_data.get("trial_start") else None,
+						"trial_end": datetime.fromtimestamp(event_data["trial_end"]).isoformat() if event_data.get("trial_end") else None,
+						"amount": amount,
+						"currency": currency,
+						"interval": interval,
+						"metadata": json.dumps(event_data.get("metadata", {}))
+					}).execute()
 					print(f"Subscription created for user {user_profile_id}")
 			
 			elif event_type == "customer.subscription.updated":
-				# Subscription updated
-				user_profile_id = event_data.get("metadata", {}).get("user_profile_id")
-				if user_profile_id:
-					print(f"Subscription updated for user {user_profile_id}")
+				# Subscription updated - update in database
+				subscription_id = event_data["id"]
+				
+				update_data = {
+						"status": event_data["status"],
+						"current_period_start": datetime.fromtimestamp(event_data["current_period_start"]).isoformat(),
+						"current_period_end": datetime.fromtimestamp(event_data["current_period_end"]).isoformat(),
+						"cancel_at_period_end": event_data.get("cancel_at_period_end", False),
+						"updated_at": datetime.now().isoformat()
+					}
+				
+				if event_data.get("canceled_at"):
+					update_data["canceled_at"] = datetime.fromtimestamp(event_data["canceled_at"]).isoformat()
+				
+				supabase.table("user_subscriptions").update(update_data).eq("stripe_subscription_id", subscription_id).execute()
+				print(f"Subscription updated: {subscription_id}")
 			
 			elif event_type == "customer.subscription.deleted":
-				# Subscription cancelled
-				user_profile_id = event_data.get("metadata", {}).get("user_profile_id")
-				if user_profile_id:
-					print(f"Subscription cancelled for user {user_profile_id}")
+				# Subscription cancelled - update status
+				subscription_id = event_data["id"]
+				supabase.table("user_subscriptions").update({
+					"status": "canceled",
+					"canceled_at": datetime.fromtimestamp(event_data.get("canceled_at", datetime.now().timestamp())).isoformat(),
+					"updated_at": datetime.now().isoformat()
+				}).eq("stripe_subscription_id", subscription_id).execute()
+				print(f"Subscription cancelled: {subscription_id}")
+			
+			elif event_type == "invoice.payment_succeeded":
+				# Invoice payment succeeded - log in payment_history
+				invoice = event_data
+				customer_id = invoice["customer"]
+				
+				# Get user_profile_id from customer
+				user_profile_id = None
+				try:
+					customer = stripe.Customer.retrieve(customer_id)
+					user_profile_id = customer.metadata.get("user_profile_id")
+				except:
+					pass
+				
+				if user_profile_id and invoice.get("subscription"):
+					# Find subscription in database
+					sub_resp = supabase.table("user_subscriptions").select("id").eq("stripe_subscription_id", invoice["subscription"]).execute()
+					subscription_id = sub_resp.data[0]["id"] if sub_resp.data else None
+					
+					supabase.table("payment_history").insert({
+						"user_profile_id": int(user_profile_id),
+						"subscription_id": subscription_id,
+						"stripe_invoice_id": invoice["id"],
+						"stripe_charge_id": invoice.get("charge"),
+						"amount": invoice["amount_paid"],
+						"currency": invoice["currency"],
+						"status": "succeeded",
+						"description": invoice.get("description") or f"Subscription payment",
+						"receipt_url": invoice.get("hosted_invoice_url")
+					}).execute()
+					print(f"Invoice payment succeeded for user {user_profile_id}")
 			
 			return jsonify({"status": "success"}), HTTPStatus.OK
 			
@@ -2173,6 +2303,92 @@ def register_routes(app: Flask) -> None:
 			print(f"Error processing webhook: {str(exc)}")
 			return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
 
+	@app.get("/stripe/payment-methods/<int:user_profile_id>")
+	def get_payment_methods(user_profile_id: int):
+		"""
+		Get payment methods for a user.
+		
+		GET /stripe/payment-methods/<user_profile_id>
+		"""
+		try:
+			# Validate user exists
+			user_exists, error_response = _validate_user_exists(user_profile_id)
+			if not user_exists:
+				return jsonify(error_response), HTTPStatus.NOT_FOUND
+			
+			supabase = get_supabase()
+			
+			# Get payment methods from database
+			pm_resp = supabase.table("payment_methods").select("*").eq("user_profile_id", user_profile_id).order("is_default", desc=True).order("created_at", desc=True).execute()
+			
+			return jsonify({
+				"payment_methods": pm_resp.data or []
+			}), HTTPStatus.OK
+				
+		except Exception as exc:
+			return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
+	
+	@app.get("/stripe/payment-history/<int:user_profile_id>")
+	def get_payment_history(user_profile_id: int):
+		"""
+		Get payment history for a user.
+		
+		GET /stripe/payment-history/<user_profile_id>
+		"""
+		try:
+			# Validate user exists
+			user_exists, error_response = _validate_user_exists(user_profile_id)
+			if not user_exists:
+				return jsonify(error_response), HTTPStatus.NOT_FOUND
+			
+			supabase = get_supabase()
+			
+			# Get payment history from database
+			history_resp = supabase.table("payment_history").select("*").eq("user_profile_id", user_profile_id).order("created_at", desc=True).limit(50).execute()
+			
+			return jsonify({
+				"payments": history_resp.data or []
+			}), HTTPStatus.OK
+				
+		except Exception as exc:
+			return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
+	
+	@app.get("/stripe/billing-info/<int:user_profile_id>")
+	def get_billing_info(user_profile_id: int):
+		"""
+		Get complete billing information for a user (subscription, payment methods, recent payments).
+		
+		GET /stripe/billing-info/<user_profile_id>
+		"""
+		try:
+			# Validate user exists
+			user_exists, error_response = _validate_user_exists(user_profile_id)
+			if not user_exists:
+				return jsonify(error_response), HTTPStatus.NOT_FOUND
+			
+			supabase = get_supabase()
+			
+			# Get subscription
+			sub_resp = supabase.table("user_subscriptions").select("*").eq("user_profile_id", user_profile_id).eq("status", "active").order("created_at", desc=True).limit(1).execute()
+			subscription = sub_resp.data[0] if sub_resp.data else None
+			
+			# Get payment methods
+			pm_resp = supabase.table("payment_methods").select("*").eq("user_profile_id", user_profile_id).order("is_default", desc=True).order("created_at", desc=True).execute()
+			payment_methods = pm_resp.data or []
+			
+			# Get recent payment history (last 10)
+			history_resp = supabase.table("payment_history").select("*").eq("user_profile_id", user_profile_id).order("created_at", desc=True).limit(10).execute()
+			recent_payments = history_resp.data or []
+			
+			return jsonify({
+				"subscription": subscription,
+				"payment_methods": payment_methods,
+				"recent_payments": recent_payments
+			}), HTTPStatus.OK
+				
+		except Exception as exc:
+			return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
+	
 	@app.post("/stripe/cancel-subscription")
 	def cancel_subscription():
 		"""
