@@ -2021,19 +2021,34 @@ def register_routes(app: Flask) -> None:
 			# Get or create Stripe customer
 			if user_profile_id:
 				# Check if user already has a Stripe customer ID
-				profile_resp = supabase.table("user_profile").select("stripe_customer_id, full_name").eq("id", user_profile_id).execute()
-				if profile_resp.data and profile_resp.data[0].get("stripe_customer_id"):
-					customer_id = profile_resp.data[0]["stripe_customer_id"]
-					# Verify customer exists in Stripe
-					try:
-						stripe.Customer.retrieve(customer_id)
-					except stripe.error.InvalidRequestError:
-						# Customer doesn't exist in Stripe, create new one
-						customer_id = None
+				# Handle case where stripe_customer_id column might not exist yet
+				try:
+					profile_resp = supabase.table("user_profile").select("stripe_customer_id, full_name").eq("id", user_profile_id).execute()
+					if profile_resp.data and profile_resp.data[0].get("stripe_customer_id"):
+						customer_id = profile_resp.data[0]["stripe_customer_id"]
+						# Verify customer exists in Stripe
+						try:
+							stripe.Customer.retrieve(customer_id)
+						except stripe.error.InvalidRequestError:
+							# Customer doesn't exist in Stripe, create new one
+							customer_id = None
+				except Exception as e:
+					# Column might not exist yet - that's okay, we'll create a new customer
+					if "does not exist" in str(e) or "42703" in str(e):
+						print(f"WARNING: stripe_customer_id column not found, creating new customer. Run migration SQL to add column.")
+					else:
+						# Other error - try to get profile without stripe_customer_id
+						try:
+							profile_resp = supabase.table("user_profile").select("full_name").eq("id", user_profile_id).execute()
+						except:
+							profile_resp = None
 				
 				if not customer_id:
 					# Create new Stripe customer
-					user_name = profile_resp.data[0].get("full_name", "") if profile_resp.data else ""
+					user_name = ""
+					if 'profile_resp' in locals() and profile_resp and profile_resp.data:
+						user_name = profile_resp.data[0].get("full_name", "")
+					
 					customer = stripe.Customer.create(
 						email=f"user-{user_profile_id}@pgadmit.com",
 						name=user_name if user_name else None,
@@ -2041,10 +2056,17 @@ def register_routes(app: Flask) -> None:
 					)
 					customer_id = customer.id
 					
-					# Store customer ID in user_profile
-					supabase.table("user_profile").update({
-						"stripe_customer_id": customer_id
-					}).eq("id", user_profile_id).execute()
+					# Store customer ID in user_profile (if column exists)
+					try:
+						supabase.table("user_profile").update({
+							"stripe_customer_id": customer_id
+						}).eq("id", user_profile_id).execute()
+					except Exception as e:
+						# Column doesn't exist - log warning but continue
+						if "does not exist" in str(e) or "42703" in str(e):
+							print(f"WARNING: Could not save stripe_customer_id - column doesn't exist. Run migration SQL.")
+						else:
+							raise
 			else:
 				# No user_profile_id, create temporary customer
 				customer = stripe.Customer.create(
@@ -2090,8 +2112,15 @@ def register_routes(app: Flask) -> None:
 			
 			supabase = get_supabase()
 			
-			# Get active subscription from database
-			subscription_resp = supabase.table("user_subscriptions").select("*").eq("user_profile_id", user_profile_id).eq("status", "active").order("created_at", desc=True).limit(1).execute()
+			# Get active subscription from database (handle missing table gracefully)
+			try:
+				subscription_resp = supabase.table("user_subscriptions").select("*").eq("user_profile_id", user_profile_id).eq("status", "active").order("created_at", desc=True).limit(1).execute()
+			except Exception as e:
+				if "Could not find the table" in str(e) or "PGRST205" in str(e):
+					print(f"WARNING: user_subscriptions table not found. Run migration SQL.")
+					return jsonify({"subscription": None, "message": "No active subscription found"}), HTTPStatus.OK
+				else:
+					raise
 			
 			if subscription_resp.data and len(subscription_resp.data) > 0:
 				sub = subscription_resp.data[0]
@@ -2324,11 +2353,19 @@ def register_routes(app: Flask) -> None:
 			
 			supabase = get_supabase()
 			
-			# Get payment methods from database
-			pm_resp = supabase.table("payment_methods").select("*").eq("user_profile_id", user_profile_id).order("is_default", desc=True).order("created_at", desc=True).execute()
+			# Get payment methods from database (handle missing table gracefully)
+			try:
+				pm_resp = supabase.table("payment_methods").select("*").eq("user_profile_id", user_profile_id).order("is_default", desc=True).order("created_at", desc=True).execute()
+				payment_methods = pm_resp.data or []
+			except Exception as e:
+				if "Could not find the table" in str(e) or "PGRST205" in str(e):
+					print(f"WARNING: payment_methods table not found. Run migration SQL.")
+					payment_methods = []
+				else:
+					raise
 			
 			return jsonify({
-				"payment_methods": pm_resp.data or []
+				"payment_methods": payment_methods
 			}), HTTPStatus.OK
 				
 		except Exception as exc:
@@ -2349,11 +2386,19 @@ def register_routes(app: Flask) -> None:
 			
 			supabase = get_supabase()
 			
-			# Get payment history from database
-			history_resp = supabase.table("payment_history").select("*").eq("user_profile_id", user_profile_id).order("created_at", desc=True).limit(50).execute()
+			# Get payment history from database (handle missing table gracefully)
+			try:
+				history_resp = supabase.table("payment_history").select("*").eq("user_profile_id", user_profile_id).order("created_at", desc=True).limit(50).execute()
+				payments = history_resp.data or []
+			except Exception as e:
+				if "Could not find the table" in str(e) or "PGRST205" in str(e):
+					print(f"WARNING: payment_history table not found. Run migration SQL.")
+					payments = []
+				else:
+					raise
 			
 			return jsonify({
-				"payments": history_resp.data or []
+				"payments": payments
 			}), HTTPStatus.OK
 				
 		except Exception as exc:
@@ -2374,17 +2419,40 @@ def register_routes(app: Flask) -> None:
 			
 			supabase = get_supabase()
 			
-			# Get subscription
-			sub_resp = supabase.table("user_subscriptions").select("*").eq("user_profile_id", user_profile_id).eq("status", "active").order("created_at", desc=True).limit(1).execute()
-			subscription = sub_resp.data[0] if sub_resp.data else None
+			# Initialize with empty defaults in case tables don't exist
+			subscription = None
+			payment_methods = []
+			recent_payments = []
 			
-			# Get payment methods
-			pm_resp = supabase.table("payment_methods").select("*").eq("user_profile_id", user_profile_id).order("is_default", desc=True).order("created_at", desc=True).execute()
-			payment_methods = pm_resp.data or []
+			# Get subscription (handle missing table gracefully)
+			try:
+				sub_resp = supabase.table("user_subscriptions").select("*").eq("user_profile_id", user_profile_id).eq("status", "active").order("created_at", desc=True).limit(1).execute()
+				subscription = sub_resp.data[0] if sub_resp.data else None
+			except Exception as e:
+				if "Could not find the table" in str(e) or "PGRST205" in str(e):
+					print(f"WARNING: user_subscriptions table not found. Run migration SQL.")
+				else:
+					raise
 			
-			# Get recent payment history (last 10)
-			history_resp = supabase.table("payment_history").select("*").eq("user_profile_id", user_profile_id).order("created_at", desc=True).limit(10).execute()
-			recent_payments = history_resp.data or []
+			# Get payment methods (handle missing table gracefully)
+			try:
+				pm_resp = supabase.table("payment_methods").select("*").eq("user_profile_id", user_profile_id).order("is_default", desc=True).order("created_at", desc=True).execute()
+				payment_methods = pm_resp.data or []
+			except Exception as e:
+				if "Could not find the table" in str(e) or "PGRST205" in str(e):
+					print(f"WARNING: payment_methods table not found. Run migration SQL.")
+				else:
+					raise
+			
+			# Get recent payment history (last 10) (handle missing table gracefully)
+			try:
+				history_resp = supabase.table("payment_history").select("*").eq("user_profile_id", user_profile_id).order("created_at", desc=True).limit(10).execute()
+				recent_payments = history_resp.data or []
+			except Exception as e:
+				if "Could not find the table" in str(e) or "PGRST205" in str(e):
+					print(f"WARNING: payment_history table not found. Run migration SQL.")
+				else:
+					raise
 			
 			return jsonify({
 				"subscription": subscription,
