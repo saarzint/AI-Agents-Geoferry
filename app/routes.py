@@ -2022,10 +2022,24 @@ def register_routes(app: Flask) -> None:
 			if user_profile_id:
 				# Check if user already has a Stripe customer ID
 				# Handle case where stripe_customer_id column might not exist yet
+				profile_resp = None
+				user_name = ""
+				
+				# Try to get profile with stripe_customer_id, fallback to just full_name if column doesn't exist
+				# First, try to get just full_name to avoid the column error
 				try:
-					profile_resp = supabase.table("user_profile").select("stripe_customer_id, full_name").eq("id", user_profile_id).execute()
-					if profile_resp.data and profile_resp.data[0].get("stripe_customer_id"):
-						customer_id = profile_resp.data[0]["stripe_customer_id"]
+					profile_resp = supabase.table("user_profile").select("full_name").eq("id", user_profile_id).execute()
+					if profile_resp.data:
+						user_name = profile_resp.data[0].get("full_name", "")
+				except Exception as e:
+					print(f"WARNING: Could not fetch user profile: {str(e)}")
+					profile_resp = None
+				
+				# Now try to get stripe_customer_id if column exists
+				try:
+					stripe_customer_resp = supabase.table("user_profile").select("stripe_customer_id").eq("id", user_profile_id).execute()
+					if stripe_customer_resp.data and stripe_customer_resp.data[0].get("stripe_customer_id"):
+						customer_id = stripe_customer_resp.data[0]["stripe_customer_id"]
 						# Verify customer exists in Stripe
 						try:
 							stripe.Customer.retrieve(customer_id)
@@ -2033,22 +2047,18 @@ def register_routes(app: Flask) -> None:
 							# Customer doesn't exist in Stripe, create new one
 							customer_id = None
 				except Exception as e:
-					# Column might not exist yet - that's okay, we'll create a new customer
-					if "does not exist" in str(e) or "42703" in str(e):
+					# Column might not exist yet (PGRST204) - that's okay, we'll create a new customer
+					error_str = str(e)
+					if "PGRST204" in error_str or "stripe_customer_id" in error_str or "Could not find" in error_str or "does not exist" in error_str or "42703" in error_str:
 						print(f"WARNING: stripe_customer_id column not found, creating new customer. Run migration SQL to add column.")
+						customer_id = None
 					else:
-						# Other error - try to get profile without stripe_customer_id
-						try:
-							profile_resp = supabase.table("user_profile").select("full_name").eq("id", user_profile_id).execute()
-						except:
-							profile_resp = None
+						# Other error - log but continue (don't fail the checkout)
+						print(f"WARNING: Error checking stripe_customer_id: {str(e)}")
+						customer_id = None
 				
 				if not customer_id:
 					# Create new Stripe customer
-					user_name = ""
-					if 'profile_resp' in locals() and profile_resp and profile_resp.data:
-						user_name = profile_resp.data[0].get("full_name", "")
-					
 					customer = stripe.Customer.create(
 						email=f"user-{user_profile_id}@pgadmit.com",
 						name=user_name if user_name else None,
@@ -2062,11 +2072,13 @@ def register_routes(app: Flask) -> None:
 							"stripe_customer_id": customer_id
 						}).eq("id", user_profile_id).execute()
 					except Exception as e:
-						# Column doesn't exist - log warning but continue
-						if "does not exist" in str(e) or "42703" in str(e):
+						# Column doesn't exist - log warning but continue (this is expected if migration not run)
+						error_str = str(e)
+						if "PGRST204" in error_str or "stripe_customer_id" in error_str or "does not exist" in error_str or "42703" in error_str:
 							print(f"WARNING: Could not save stripe_customer_id - column doesn't exist. Run migration SQL.")
 						else:
-							raise
+							# Other error - log but don't fail
+							print(f"WARNING: Could not save stripe_customer_id: {str(e)}")
 			else:
 				# No user_profile_id, create temporary customer
 				customer = stripe.Customer.create(
