@@ -2200,23 +2200,37 @@ def register_routes(app: Flask) -> None:
 						try:
 							invoice = stripe.Invoice.retrieve(invoice_id)
 							if invoice.subscription:
-								sub_resp = supabase.table("user_subscriptions").select("id").eq("stripe_subscription_id", invoice.subscription).execute()
-								if sub_resp.data:
-									subscription_id = sub_resp.data[0]["id"]
+								try:
+									sub_resp = supabase.table("user_subscriptions").select("id").eq("stripe_subscription_id", invoice.subscription).execute()
+									if sub_resp.data:
+										subscription_id = sub_resp.data[0]["id"]
+								except Exception as e:
+									if "Could not find the table" in str(e) or "PGRST205" in str(e):
+										print(f"WARNING: user_subscriptions table not found when logging payment")
+									else:
+										pass
 						except:
 							pass
 					
-					supabase.table("payment_history").insert({
-						"user_profile_id": int(user_profile_id),
-						"subscription_id": subscription_id,
-						"stripe_payment_intent_id": event_data["id"],
-						"amount": event_data["amount"],
-						"currency": event_data["currency"],
-						"status": "succeeded",
-						"description": event_data.get("description"),
-						"receipt_url": event_data.get("charges", {}).get("data", [{}])[0].get("receipt_url") if event_data.get("charges") else None
-					}).execute()
-					print(f"Payment succeeded for user {user_profile_id}")
+					# Try to log payment (handle missing table gracefully)
+					try:
+						supabase.table("payment_history").insert({
+							"user_profile_id": int(user_profile_id),
+							"subscription_id": subscription_id,
+							"stripe_payment_intent_id": event_data["id"],
+							"amount": event_data["amount"],
+							"currency": event_data["currency"],
+							"status": "succeeded",
+							"description": event_data.get("description"),
+							"receipt_url": event_data.get("charges", {}).get("data", [{}])[0].get("receipt_url") if event_data.get("charges") else None
+						}).execute()
+						print(f"✅ Payment succeeded for user {user_profile_id}")
+					except Exception as e:
+						error_str = str(e)
+						if "Could not find the table" in error_str or "PGRST205" in error_str:
+							print(f"WARNING: payment_history table not found. Payment logged in Stripe but not in database.")
+						else:
+							print(f"WARNING: Could not log payment to database: {str(e)}")
 			
 			elif event_type == "payment_intent.payment_failed":
 				# Payment failed
@@ -2265,25 +2279,36 @@ def register_routes(app: Flask) -> None:
 						plan_id = "team"
 						plan_name = "Team"
 					
-					supabase.table("user_subscriptions").insert({
-						"user_profile_id": int(user_profile_id),
-						"stripe_subscription_id": subscription_id,
-						"stripe_customer_id": customer_id,
-						"plan_id": plan_id,
-						"plan_name": plan_name,
-						"price_id": price_id,
-						"status": event_data["status"],
-						"current_period_start": datetime.fromtimestamp(event_data["current_period_start"]).isoformat(),
-						"current_period_end": datetime.fromtimestamp(event_data["current_period_end"]).isoformat(),
-						"cancel_at_period_end": event_data.get("cancel_at_period_end", False),
-						"trial_start": datetime.fromtimestamp(event_data["trial_start"]).isoformat() if event_data.get("trial_start") else None,
-						"trial_end": datetime.fromtimestamp(event_data["trial_end"]).isoformat() if event_data.get("trial_end") else None,
-						"amount": amount,
-						"currency": currency,
-						"interval": interval,
-						"metadata": json.dumps(event_data.get("metadata", {}))
-					}).execute()
-					print(f"Subscription created for user {user_profile_id}")
+					# Try to insert subscription (handle missing table gracefully)
+					try:
+						supabase.table("user_subscriptions").insert({
+							"user_profile_id": int(user_profile_id),
+							"stripe_subscription_id": subscription_id,
+							"stripe_customer_id": customer_id,
+							"plan_id": plan_id,
+							"plan_name": plan_name,
+							"price_id": price_id,
+							"status": event_data["status"],
+							"current_period_start": datetime.fromtimestamp(event_data["current_period_start"]).isoformat(),
+							"current_period_end": datetime.fromtimestamp(event_data["current_period_end"]).isoformat(),
+							"cancel_at_period_end": event_data.get("cancel_at_period_end", False),
+							"trial_start": datetime.fromtimestamp(event_data["trial_start"]).isoformat() if event_data.get("trial_start") else None,
+							"trial_end": datetime.fromtimestamp(event_data["trial_end"]).isoformat() if event_data.get("trial_end") else None,
+							"amount": amount,
+							"currency": currency,
+							"interval": interval,
+							"metadata": json.dumps(event_data.get("metadata", {}))
+						}).execute()
+						print(f"✅ Subscription created for user {user_profile_id}")
+					except Exception as e:
+						error_str = str(e)
+						if "Could not find the table" in error_str or "PGRST205" in error_str:
+							print(f"❌ ERROR: user_subscriptions table not found! Subscription {subscription_id} for user {user_profile_id} was created in Stripe but NOT saved to database.")
+							print(f"   Run the migration SQL in Supabase to create the table, then manually sync this subscription.")
+							print(f"   Subscription details: plan={plan_name}, customer={customer_id}, subscription={subscription_id}")
+						else:
+							print(f"❌ ERROR: Failed to save subscription to database: {str(e)}")
+							raise
 			
 			elif event_type == "customer.subscription.updated":
 				# Subscription updated - update in database
@@ -2327,27 +2352,191 @@ def register_routes(app: Flask) -> None:
 					pass
 				
 				if user_profile_id and invoice.get("subscription"):
-					# Find subscription in database
-					sub_resp = supabase.table("user_subscriptions").select("id").eq("stripe_subscription_id", invoice["subscription"]).execute()
-					subscription_id = sub_resp.data[0]["id"] if sub_resp.data else None
+					# Find subscription in database (handle missing table gracefully)
+					subscription_id = None
+					try:
+						sub_resp = supabase.table("user_subscriptions").select("id").eq("stripe_subscription_id", invoice["subscription"]).execute()
+						subscription_id = sub_resp.data[0]["id"] if sub_resp.data else None
+					except Exception as e:
+						if "Could not find the table" in str(e) or "PGRST205" in str(e):
+							print(f"WARNING: user_subscriptions table not found when logging invoice payment")
+						else:
+							pass
 					
-					supabase.table("payment_history").insert({
-						"user_profile_id": int(user_profile_id),
-						"subscription_id": subscription_id,
-						"stripe_invoice_id": invoice["id"],
-						"stripe_charge_id": invoice.get("charge"),
-						"amount": invoice["amount_paid"],
-						"currency": invoice["currency"],
-						"status": "succeeded",
-						"description": invoice.get("description") or f"Subscription payment",
-						"receipt_url": invoice.get("hosted_invoice_url")
-					}).execute()
-					print(f"Invoice payment succeeded for user {user_profile_id}")
+					# Try to log payment (handle missing table gracefully)
+					try:
+						supabase.table("payment_history").insert({
+							"user_profile_id": int(user_profile_id),
+							"subscription_id": subscription_id,
+							"stripe_invoice_id": invoice["id"],
+							"stripe_charge_id": invoice.get("charge"),
+							"amount": invoice["amount_paid"],
+							"currency": invoice["currency"],
+							"status": "succeeded",
+							"description": invoice.get("description") or f"Subscription payment",
+							"receipt_url": invoice.get("hosted_invoice_url")
+						}).execute()
+						print(f"✅ Invoice payment succeeded for user {user_profile_id}")
+					except Exception as e:
+						error_str = str(e)
+						if "Could not find the table" in error_str or "PGRST205" in error_str:
+							print(f"WARNING: payment_history table not found. Payment logged in Stripe but not in database.")
+						else:
+							print(f"WARNING: Could not log invoice payment to database: {str(e)}")
 			
 			return jsonify({"status": "success"}), HTTPStatus.OK
 			
 		except Exception as exc:
-			print(f"Error processing webhook: {str(exc)}")
+			print(f"❌ Error processing webhook: {str(exc)}")
+			import traceback
+			print(f"Traceback: {traceback.format_exc()}")
+			return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
+	
+	@app.post("/stripe/sync-subscription")
+	def sync_subscription():
+		"""
+		Manually sync a subscription from Stripe to the database.
+		Useful if webhook failed or tables were missing when subscription was created.
+		
+		POST /stripe/sync-subscription
+		Body: {
+			"user_profile_id": 1,
+			"subscription_id": "sub_xxxxx" (optional - will find from customer)
+		}
+		"""
+		try:
+			payload = request.get_json(silent=True) or {}
+			user_profile_id = payload.get("user_profile_id")
+			subscription_id = payload.get("subscription_id")
+			
+			if not user_profile_id:
+				return jsonify({"error": "user_profile_id is required"}), HTTPStatus.BAD_REQUEST
+			
+			# Validate user exists
+			user_exists, error_response = _validate_user_exists(user_profile_id)
+			if not user_exists:
+				return jsonify(error_response), HTTPStatus.NOT_FOUND
+			
+			stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+			if not stripe.api_key:
+				return jsonify({"error": "Stripe secret key not configured"}), HTTPStatus.INTERNAL_SERVER_ERROR
+			
+			supabase = get_supabase()
+			
+			# Get Stripe customer ID from user profile
+			customer_id = None
+			try:
+				profile_resp = supabase.table("user_profile").select("stripe_customer_id").eq("id", user_profile_id).execute()
+				if profile_resp.data and profile_resp.data[0].get("stripe_customer_id"):
+					customer_id = profile_resp.data[0]["stripe_customer_id"]
+			except Exception as e:
+				error_str = str(e)
+				if "PGRST204" in error_str or "stripe_customer_id" in error_str:
+					# Column doesn't exist - try to find customer by email or metadata
+					print(f"WARNING: stripe_customer_id column not found, searching Stripe by metadata...")
+				else:
+					raise
+			
+			# If no customer_id, search Stripe by metadata
+			if not customer_id:
+				customers = stripe.Customer.list(limit=100, metadata={"user_profile_id": str(user_profile_id)})
+				if customers.data:
+					customer_id = customers.data[0].id
+					# Try to save it if column exists
+					try:
+						supabase.table("user_profile").update({
+							"stripe_customer_id": customer_id
+						}).eq("id", user_profile_id).execute()
+					except:
+						pass  # Column might not exist
+			
+			if not customer_id:
+				return jsonify({"error": "No Stripe customer found for this user"}), HTTPStatus.NOT_FOUND
+			
+			# Get subscription from Stripe
+			if not subscription_id:
+				subscriptions = stripe.Subscription.list(customer=customer_id, status="all", limit=1)
+				if not subscriptions.data:
+					return jsonify({"error": "No subscription found for this customer"}), HTTPStatus.NOT_FOUND
+				subscription_id = subscriptions.data[0].id
+			
+			subscription = stripe.Subscription.retrieve(subscription_id)
+			
+			# Get price details
+			price_id = subscription["items"]["data"][0]["price"]["id"]
+			price_obj = subscription["items"]["data"][0]["price"]
+			amount = price_obj["unit_amount"]
+			currency = price_obj["currency"]
+			interval = price_obj["recurring"]["interval"]
+			
+			# Determine plan_id from price_id
+			plan_id = "starter"
+			plan_name = "Starter"
+			if "price_1SdCFdGMytl1afSZCgtVvtzF" in price_id:
+				plan_id = "pro"
+				plan_name = "Pro"
+			elif "price_1SdCFwGMytl1afSZtpoRPzhd" in price_id:
+				plan_id = "team"
+				plan_name = "Team"
+			
+			# Save to database
+			try:
+				# Check if subscription already exists
+				existing = supabase.table("user_subscriptions").select("id").eq("stripe_subscription_id", subscription_id).execute()
+				
+				sub_data = {
+					"user_profile_id": int(user_profile_id),
+					"stripe_subscription_id": subscription_id,
+					"stripe_customer_id": customer_id,
+					"plan_id": plan_id,
+					"plan_name": plan_name,
+					"price_id": price_id,
+					"status": subscription["status"],
+					"current_period_start": datetime.fromtimestamp(subscription["current_period_start"]).isoformat(),
+					"current_period_end": datetime.fromtimestamp(subscription["current_period_end"]).isoformat(),
+					"cancel_at_period_end": subscription.get("cancel_at_period_end", False),
+					"trial_start": datetime.fromtimestamp(subscription["trial_start"]).isoformat() if subscription.get("trial_start") else None,
+					"trial_end": datetime.fromtimestamp(subscription["trial_end"]).isoformat() if subscription.get("trial_end") else None,
+					"amount": amount,
+					"currency": currency,
+					"interval": interval,
+					"metadata": json.dumps(subscription.get("metadata", {}))
+				}
+				
+				if existing.data:
+					# Update existing
+					supabase.table("user_subscriptions").update(sub_data).eq("id", existing.data[0]["id"]).execute()
+					return jsonify({
+						"message": "Subscription synced and updated",
+						"subscription_id": subscription_id,
+						"plan": plan_name,
+						"status": subscription["status"]
+					}), HTTPStatus.OK
+				else:
+					# Insert new
+					supabase.table("user_subscriptions").insert(sub_data).execute()
+					return jsonify({
+						"message": "Subscription synced successfully",
+						"subscription_id": subscription_id,
+						"plan": plan_name,
+						"status": subscription["status"]
+					}), HTTPStatus.CREATED
+					
+			except Exception as e:
+				error_str = str(e)
+				if "Could not find the table" in error_str or "PGRST205" in error_str:
+					return jsonify({
+						"error": "user_subscriptions table not found",
+						"message": "Run the migration SQL in Supabase to create the table",
+						"subscription_id": subscription_id,
+						"plan": plan_name
+					}), HTTPStatus.SERVICE_UNAVAILABLE
+				else:
+					raise
+					
+		except stripe.error.StripeError as e:
+			return jsonify({"error": f"Stripe error: {str(e)}"}), HTTPStatus.BAD_REQUEST
+		except Exception as exc:
 			return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
 
 	@app.get("/stripe/payment-methods/<int:user_profile_id>")
