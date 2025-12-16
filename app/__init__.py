@@ -1,4 +1,4 @@
-from flask import Flask, send_from_directory, jsonify
+from flask import Flask, send_from_directory, jsonify, request
 from flask_cors import CORS
 from .routes import register_routes
 from .event_listener import start_profile_listener, stop_profile_listener
@@ -11,7 +11,7 @@ def create_app() -> Flask:
 	app = Flask(
 		__name__,
 		static_folder="static-frontend",  # populated by Docker multi-stage build
-		static_url_path="/",
+		static_url_path="",  # Empty string means static files are served at root level
 	)
 	# CORS configuration - allow all origins since frontend/backend are in same container
 	# This allows the app to work with any domain (Cloud Run URL, custom domain, localhost)
@@ -30,31 +30,9 @@ def create_app() -> Flask:
 		supports_credentials=False,
 	)
 
-	# Root route – serve the frontend if it exists, otherwise fall back to JSON info
-	@app.route("/")
-	def index():
-		index_path = os.path.join(app.static_folder, "index.html")
-		if os.path.exists(index_path):
-			return send_from_directory(app.static_folder, "index.html")
-
-		# Fallback: keep a helpful JSON response if the frontend build is missing
-		return jsonify(
-			message="Welcome to PG Admit - AI AGENTS",
-			version="1.0.0",
-		)
-
-	# Optional SPA fallback so client-side routes work in production.
-	# This will serve index.html for non-API paths.
-	# Note: This route must be registered AFTER register_routes() to avoid catching API endpoints
-	# We'll register it at the end of the function
-
-	register_routes(app)
-	
-	# SPA fallback - register AFTER API routes so API routes take precedence
-	# This serves index.html for client-side routes (React Router)
-	@app.route("/<path:path>")
-	def spa_fallback(path: str):
-		# List of API route prefixes that should NOT serve index.html
+	# Helper function to check if a path is an API route
+	def is_api_route(path: str) -> bool:
+		"""Check if the path is an API route that shouldn't serve index.html"""
 		api_prefixes = (
 			"api",
 			"admissions",
@@ -68,25 +46,98 @@ def create_app() -> Flask:
 			"fetch_application_requirements",
 			"application_requirements",
 			"health",
+			"counselor_notifications",
 		)
-		
-		# Check if this path starts with any API prefix
-		if any(path.startswith(prefix) for prefix in api_prefixes):
-			# This is an API route - return 404 (should have been handled by register_routes)
-			return ("Not Found", 404)
+		# Remove leading slash for comparison
+		clean_path = path.lstrip('/')
+		return any(clean_path.startswith(prefix) for prefix in api_prefixes)
 
-		# This is a frontend route - serve index.html for React Router
-		# Check if static folder exists and has index.html
+	# Helper function to serve index.html for SPA
+	def serve_spa_index():
+		"""Serve the SPA index.html file"""
 		if app.static_folder:
 			index_path = os.path.join(app.static_folder, "index.html")
 			if os.path.exists(index_path):
 				return send_from_directory(app.static_folder, "index.html")
-			else:
-				# Log for debugging
-				print(f"Warning: index.html not found at {index_path}")
-				print(f"Static folder: {app.static_folder}")
-				print(f"Static folder exists: {os.path.exists(app.static_folder) if app.static_folder else 'N/A'}")
+		return None
 
+	# Root route – serve the frontend if it exists, otherwise fall back to JSON info
+	@app.route("/")
+	def index():
+		result = serve_spa_index()
+		if result:
+			return result
+
+		# Fallback: keep a helpful JSON response if the frontend build is missing
+		return jsonify(
+			message="Welcome to PG Admit - AI AGENTS",
+			version="1.0.0",
+		)
+
+	register_routes(app)
+	
+	# SPA fallback - catch-all route for client-side routes (React Router)
+	# This handles paths like /dashboard, /profile, etc.
+	@app.route("/<path:path>")
+	def spa_fallback(path: str):
+		# Check if this is an API route
+		if is_api_route(path):
+			# This is an API route - return 404 (should have been handled by register_routes)
+			return jsonify({"error": "Not Found", "path": path}), 404
+
+		# Check if this is a request for a static file (js, css, images, etc.)
+		static_extensions = ('.js', '.css', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.woff', '.woff2', '.ttf', '.eot', '.map', '.json')
+		if path.endswith(static_extensions):
+			# Try to serve from static folder
+			if app.static_folder:
+				file_path = os.path.join(app.static_folder, path)
+				if os.path.exists(file_path):
+					return send_from_directory(app.static_folder, path)
+			# Static file not found
+			return ("Not Found", 404)
+
+		# This is a frontend route - serve index.html for React Router
+		result = serve_spa_index()
+		if result:
+			return result
+
+		# Log for debugging if index.html is not found
+		if app.static_folder:
+			index_path = os.path.join(app.static_folder, "index.html")
+			print(f"Warning: index.html not found at {index_path}")
+			print(f"Static folder: {app.static_folder}")
+			print(f"Static folder exists: {os.path.exists(app.static_folder) if app.static_folder else 'N/A'}")
+
+		return ("Not Found", 404)
+	
+	# 404 Error Handler - Critical for SPA routing!
+	# This catches any 404 errors and serves index.html for frontend routes
+	# This is the key fix for page reload issues on client-side routes
+	@app.errorhandler(404)
+	def handle_404(e):
+		# Get the requested path
+		path = request.path
+		
+		# If it's an API route, return proper JSON 404
+		if is_api_route(path):
+			return jsonify({
+				"error": "Not Found",
+				"message": f"The requested endpoint '{path}' was not found",
+				"path": path
+			}), 404
+		
+		# For static file requests that weren't found, return 404
+		static_extensions = ('.js', '.css', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.woff', '.woff2', '.ttf', '.eot', '.map')
+		if any(path.endswith(ext) for ext in static_extensions):
+			return ("Not Found", 404)
+		
+		# For all other routes (frontend routes), serve index.html
+		# This enables React Router to handle the route on the client side
+		result = serve_spa_index()
+		if result:
+			return result
+		
+		# If index.html doesn't exist, return 404
 		return ("Not Found", 404)
 	
 	# Start profile change listener (simple polling)
