@@ -36,9 +36,15 @@ def _validate_user_exists(user_profile_id: int) -> tuple[bool, dict]:
 		
 		return True, None
 	except Exception as exc:
+		# Log the full error for debugging
+		import traceback
+		error_details = str(exc)
+		print(f"ERROR in _validate_user_exists: {error_details}")
+		print(f"Traceback: {traceback.format_exc()}")
 		return False, {
 			"error": f"Failed to validate user profile: {str(exc)}",
-			"user_profile_id": user_profile_id
+			"user_profile_id": user_profile_id,
+			"error_type": type(exc).__name__
 		}
 
 def register_routes(app: Flask) -> None:
