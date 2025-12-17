@@ -107,11 +107,49 @@ def _credit_tokens(
 	metadata: Optional[Dict[str, Any]] = None,
 ) -> None:
 	"""
-	Credit tokens to a user using the credit_tokens RPC.
-	Logs warnings if migration is not yet applied but does not raise.
+	Credit tokens to a user.
+
+	Primary path: call the Postgres credit_tokens() function via Supabase RPC.
+	Fallback path (if RPC is missing or errors): perform the update directly
+	against user_profile and token_transactions tables.
 	"""
 	if amount is None or amount <= 0:
 		return
+
+	def _fallback_db_credit() -> None:
+		"""Direct DB update if RPC path is unavailable."""
+		try:
+			supabase = get_supabase()
+
+			# Get current balance
+			profile_resp = supabase.table("user_profile").select("token_balance").eq("id", user_profile_id).execute()
+			if not profile_resp.data:
+				print(f"⚠️  WARNING: Could not credit tokens – user_profile {user_profile_id} not found")
+				return
+
+			current_balance = profile_resp.data[0].get("token_balance") or 0
+			new_balance = current_balance + amount
+
+			# Update balance
+			supabase.table("user_profile").update({
+				"token_balance": new_balance,
+				"updated_at": datetime.now().isoformat(),
+			}).eq("id", user_profile_id).execute()
+
+			# Insert ledger row
+			supabase.table("token_transactions").insert({
+				"user_profile_id": user_profile_id,
+				"delta": amount,
+				"balance_after": new_balance,
+				"reason": reason,
+				"feature": feature_key,
+				"source": source,
+				"metadata": metadata or {},
+			}).execute()
+
+			print(f"✅ Tokens credited via fallback DB path: user={user_profile_id}, amount={amount}, balance={new_balance}")
+		except Exception as inner_exc:
+			print(f"❌ ERROR in fallback token credit for user {user_profile_id}: {inner_exc}")
 
 	try:
 		supabase = get_supabase()
@@ -125,16 +163,31 @@ def _credit_tokens(
 		}
 		result = supabase.rpc("credit_tokens", payload).execute()
 		data = getattr(result, "data", None) or result
-		if isinstance(data, dict) and not data.get("success"):
+
+		# If RPC returns a structured result, check success flag
+		if isinstance(data, dict):
+			if data.get("success"):
+				print(f"✅ Tokens credited via RPC: user={user_profile_id}, amount={amount}, balance={data.get('balance')}")
+				return
+
 			error_msg = data.get("error")
 			if error_msg and any(k in str(error_msg) for k in ("function credit_tokens", "PGRST", "does not exist")):
-				print("⚠️  WARNING: credit_tokens RPC not available. Token credits not recorded until migrations are applied.")
-			else:
-				print(f"⚠️  WARNING: credit_tokens RPC returned error: {error_msg}")
+				print("⚠️  WARNING: credit_tokens RPC not available. Falling back to direct DB credit.")
+				_fallback_db_credit()
+				return
+
+			print(f"⚠️  WARNING: credit_tokens RPC returned error: {error_msg}. Falling back to direct DB credit.")
+			_fallback_db_credit()
+			return
+
+		# Unexpected RPC response format – fall back to direct DB credit
+		print(f"⚠️  WARNING: Unexpected credit_tokens RPC response format: {data}. Falling back to direct DB credit.")
+		_fallback_db_credit()
 	except Exception as exc:
 		error_str = str(exc)
 		if any(k in error_str for k in ("credit_tokens", "PGRST", "does not exist")):
-			print(f"⚠️  WARNING: credit_tokens RPC error – token credits not recorded: {error_str}")
+			print(f"⚠️  WARNING: credit_tokens RPC error – falling back to direct DB credit: {error_str}")
+			_fallback_db_credit()
 		else:
 			print(f"❌ ERROR crediting tokens for user {user_profile_id}: {error_str}")
 def _validate_user_exists(user_profile_id: int) -> tuple[bool, dict]:
