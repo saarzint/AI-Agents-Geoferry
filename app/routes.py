@@ -2886,8 +2886,36 @@ Each idea should be 2-3 sentences explaining the concept, angle, and how to make
 						plan_id = "team"
 						plan_name = "Tier 3"
 					
+					# Helper function to safely convert timestamp to ISO string
+					def safe_timestamp_to_iso(timestamp_value):
+						if timestamp_value is None:
+							return None
+						if isinstance(timestamp_value, (int, float)):
+							return datetime.fromtimestamp(timestamp_value).isoformat()
+						if isinstance(timestamp_value, str):
+							return timestamp_value
+						return timestamp_value.isoformat() if hasattr(timestamp_value, 'isoformat') else str(timestamp_value)
+					
 					# Try to insert subscription (handle missing table gracefully)
 					try:
+						# Safely extract timestamp fields
+						current_period_start = safe_timestamp_to_iso(event_data.get("current_period_start"))
+						current_period_end = safe_timestamp_to_iso(event_data.get("current_period_end"))
+						
+						if not current_period_start or not current_period_end:
+							# Fallback: use current time if missing
+							now = datetime.now().isoformat()
+							if not current_period_start:
+								current_period_start = now
+							if not current_period_end:
+								# Add 1 month if interval is month, 1 year if year
+								if interval == "month":
+									current_period_end = (datetime.now() + timedelta(days=30)).isoformat()
+								elif interval == "year":
+									current_period_end = (datetime.now() + timedelta(days=365)).isoformat()
+								else:
+									current_period_end = (datetime.now() + timedelta(days=30)).isoformat()
+						
 						supabase.table("user_subscriptions").insert({
 							"user_profile_id": int(user_profile_id),
 							"stripe_subscription_id": subscription_id,
@@ -2896,11 +2924,11 @@ Each idea should be 2-3 sentences explaining the concept, angle, and how to make
 							"plan_name": plan_name,
 							"price_id": price_id,
 							"status": event_data["status"],
-							"current_period_start": datetime.fromtimestamp(event_data["current_period_start"]).isoformat(),
-							"current_period_end": datetime.fromtimestamp(event_data["current_period_end"]).isoformat(),
+							"current_period_start": current_period_start,
+							"current_period_end": current_period_end,
 							"cancel_at_period_end": event_data.get("cancel_at_period_end", False),
-							"trial_start": datetime.fromtimestamp(event_data["trial_start"]).isoformat() if event_data.get("trial_start") else None,
-							"trial_end": datetime.fromtimestamp(event_data["trial_end"]).isoformat() if event_data.get("trial_end") else None,
+							"trial_start": safe_timestamp_to_iso(event_data.get("trial_start")),
+							"trial_end": safe_timestamp_to_iso(event_data.get("trial_end")),
 							"amount": amount,
 							"currency": currency,
 							"interval": interval,
@@ -2930,13 +2958,37 @@ Each idea should be 2-3 sentences explaining the concept, angle, and how to make
 							print(f"⚠️  WARNING: No token grant configured for plan_id={plan_id}")
 					except Exception as e:
 						error_str = str(e)
+						# Always try to credit tokens even if subscription save fails
+						tokens_to_credit = PLAN_TOKEN_GRANTS.get(plan_id)
+						if tokens_to_credit:
+							print(f"💰 Attempting to credit tokens despite subscription save error: {tokens_to_credit} tokens to user {user_profile_id}")
+							try:
+								_credit_tokens(
+									user_profile_id=int(user_profile_id),
+									amount=tokens_to_credit,
+									reason="subscription_created",
+									source="stripe_webhook",
+									feature_key=None,
+									metadata={
+										"stripe_subscription_id": subscription_id,
+										"price_id": price_id,
+										"plan_id": plan_id,
+										"plan_name": plan_name,
+										"error": error_str,
+										"note": "Credited despite subscription save error"
+									},
+								)
+								print(f"✅ Token credit completed despite subscription save error")
+							except Exception as token_error:
+								print(f"❌ ERROR crediting tokens: {token_error}")
+						
 						if "Could not find the table" in error_str or "PGRST205" in error_str:
 							print(f"❌ ERROR: user_subscriptions table not found! Subscription {subscription_id} for user {user_profile_id} was created in Stripe but NOT saved to database.")
 							print(f"   Run the migration SQL in Supabase to create the table, then manually sync this subscription.")
 							print(f"   Subscription details: plan={plan_name}, customer={customer_id}, subscription={subscription_id}")
 						else:
 							print(f"❌ ERROR: Failed to save subscription to database: {str(e)}")
-							raise
+							# Don't raise - we've already credited tokens, so webhook should return success
 			
 			elif event_type == "customer.subscription.updated":
 				# Subscription updated - update in database
@@ -3207,10 +3259,41 @@ Each idea should be 2-3 sentences explaining the concept, angle, and how to make
 				plan_id = "team"
 				plan_name = "Tier 3"
 			
+			# Helper function to safely convert timestamp to ISO string
+			def safe_timestamp_to_iso(timestamp_value):
+				if timestamp_value is None:
+					return None
+				if isinstance(timestamp_value, (int, float)):
+					return datetime.fromtimestamp(timestamp_value).isoformat()
+				# If already a string or datetime, return as-is or convert
+				if isinstance(timestamp_value, str):
+					return timestamp_value
+				return timestamp_value.isoformat() if hasattr(timestamp_value, 'isoformat') else str(timestamp_value)
+			
 			# Save to database
 			try:
 				# Check if subscription already exists
 				existing = supabase.table("user_subscriptions").select("id").eq("stripe_subscription_id", subscription_id).execute()
+				
+				# Safely extract timestamp fields
+				current_period_start = safe_timestamp_to_iso(subscription.get("current_period_start"))
+				current_period_end = safe_timestamp_to_iso(subscription.get("current_period_end"))
+				
+				if not current_period_start or not current_period_end:
+					# Fallback: use current time if missing
+					now = datetime.now().isoformat()
+					if not current_period_start:
+						current_period_start = now
+						print(f"⚠️  WARNING: current_period_start missing, using current time")
+					if not current_period_end:
+						# Add 1 month if interval is month, 1 year if year
+						if interval == "month":
+							current_period_end = (datetime.now() + timedelta(days=30)).isoformat()
+						elif interval == "year":
+							current_period_end = (datetime.now() + timedelta(days=365)).isoformat()
+						else:
+							current_period_end = (datetime.now() + timedelta(days=30)).isoformat()
+						print(f"⚠️  WARNING: current_period_end missing, using estimated end time")
 				
 				sub_data = {
 					"user_profile_id": int(user_profile_id),
@@ -3220,11 +3303,11 @@ Each idea should be 2-3 sentences explaining the concept, angle, and how to make
 					"plan_name": plan_name,
 					"price_id": price_id,
 					"status": subscription["status"],
-					"current_period_start": datetime.fromtimestamp(subscription["current_period_start"]).isoformat(),
-					"current_period_end": datetime.fromtimestamp(subscription["current_period_end"]).isoformat(),
+					"current_period_start": current_period_start,
+					"current_period_end": current_period_end,
 					"cancel_at_period_end": subscription.get("cancel_at_period_end", False),
-					"trial_start": datetime.fromtimestamp(subscription["trial_start"]).isoformat() if subscription.get("trial_start") else None,
-					"trial_end": datetime.fromtimestamp(subscription["trial_end"]).isoformat() if subscription.get("trial_end") else None,
+					"trial_start": safe_timestamp_to_iso(subscription.get("trial_start")),
+					"trial_end": safe_timestamp_to_iso(subscription.get("trial_end")),
 					"amount": amount,
 					"currency": currency,
 					"interval": interval,
@@ -3234,19 +3317,47 @@ Each idea should be 2-3 sentences explaining the concept, angle, and how to make
 				if existing.data:
 					# Update existing
 					supabase.table("user_subscriptions").update(sub_data).eq("id", existing.data[0]["id"]).execute()
-					return jsonify({
-						"message": "Subscription synced and updated",
-						"subscription_id": subscription_id,
-						"plan": plan_name,
-						"status": subscription["status"]
-					}), HTTPStatus.OK
+					print(f"✅ Subscription updated in database: {subscription_id}")
 				else:
 					# Insert new
 					supabase.table("user_subscriptions").insert(sub_data).execute()
+					print(f"✅ Subscription inserted into database: {subscription_id}")
 
-					# Credit initial plan tokens on first sync if applicable
+				# Credit tokens regardless of whether subscription was updated or inserted
+				# This ensures tokens are credited even if there was a previous error
+				tokens_to_credit = PLAN_TOKEN_GRANTS.get(plan_id)
+				if tokens_to_credit and subscription["status"] in ("active", "trialing"):
+					print(f"💰 Crediting {tokens_to_credit} tokens to user {user_profile_id} for subscription sync (plan={plan_name}, plan_id={plan_id})")
+					_credit_tokens(
+						user_profile_id=int(user_profile_id),
+						amount=tokens_to_credit,
+						reason="subscription_synced",
+						source="stripe_sync_subscription",
+						feature_key=None,
+						metadata={
+							"stripe_subscription_id": subscription_id,
+							"price_id": price_id,
+							"plan_id": plan_id,
+							"plan_name": plan_name,
+						},
+					)
+					print(f"✅ Token credit completed for user {user_profile_id}")
+
+				return jsonify({
+					"message": "Subscription synced successfully" if not existing.data else "Subscription synced and updated",
+					"subscription_id": subscription_id,
+					"plan": plan_name,
+					"status": subscription["status"],
+					"tokens_credited": tokens_to_credit if tokens_to_credit and subscription["status"] in ("active", "trialing") else 0
+				}), HTTPStatus.CREATED if not existing.data else HTTPStatus.OK
+					
+			except Exception as e:
+				error_str = str(e)
+				if "Could not find the table" in error_str or "PGRST205" in error_str:
+					# Even if table is missing, try to credit tokens
 					tokens_to_credit = PLAN_TOKEN_GRANTS.get(plan_id)
 					if tokens_to_credit and subscription["status"] in ("active", "trialing"):
+						print(f"💰 Attempting to credit tokens despite table error: {tokens_to_credit} tokens to user {user_profile_id}")
 						_credit_tokens(
 							user_profile_id=int(user_profile_id),
 							amount=tokens_to_credit,
@@ -3258,26 +3369,41 @@ Each idea should be 2-3 sentences explaining the concept, angle, and how to make
 								"price_id": price_id,
 								"plan_id": plan_id,
 								"plan_name": plan_name,
+								"note": "Credited despite subscription table error"
 							},
 						)
-
-					return jsonify({
-						"message": "Subscription synced successfully",
-						"subscription_id": subscription_id,
-						"plan": plan_name,
-						"status": subscription["status"]
-					}), HTTPStatus.CREATED
 					
-			except Exception as e:
-				error_str = str(e)
-				if "Could not find the table" in error_str or "PGRST205" in error_str:
 					return jsonify({
 						"error": "user_subscriptions table not found",
 						"message": "Run the migration SQL in Supabase to create the table",
 						"subscription_id": subscription_id,
-						"plan": plan_name
+						"plan": plan_name,
+						"tokens_credited": tokens_to_credit if tokens_to_credit and subscription["status"] in ("active", "trialing") else 0
 					}), HTTPStatus.SERVICE_UNAVAILABLE
 				else:
+					# For other errors, still try to credit tokens
+					print(f"❌ ERROR saving subscription: {error_str}")
+					tokens_to_credit = PLAN_TOKEN_GRANTS.get(plan_id)
+					if tokens_to_credit and subscription["status"] in ("active", "trialing"):
+						print(f"💰 Attempting to credit tokens despite error: {tokens_to_credit} tokens to user {user_profile_id}")
+						try:
+							_credit_tokens(
+								user_profile_id=int(user_profile_id),
+								amount=tokens_to_credit,
+								reason="subscription_synced",
+								source="stripe_sync_subscription",
+								feature_key=None,
+								metadata={
+									"stripe_subscription_id": subscription_id,
+									"price_id": price_id,
+									"plan_id": plan_id,
+									"plan_name": plan_name,
+									"error": error_str,
+									"note": "Credited despite subscription save error"
+								},
+							)
+						except Exception as token_error:
+							print(f"❌ ERROR crediting tokens: {token_error}")
 					raise
 					
 		except stripe.error.StripeError as e:
