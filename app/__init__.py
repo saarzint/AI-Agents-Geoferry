@@ -46,6 +46,7 @@ def create_app() -> Flask:
 			"fetch_application_requirements",
 			"application_requirements",
 			"tokens",  # token balance & history endpoints
+			"essay",  # essay analysis & idea generation endpoints
 			"health",
 			"counselor_notifications",
 		)

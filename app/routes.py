@@ -258,7 +258,9 @@ def register_routes(app: Flask) -> None:
 				"stripe_webhook": "/stripe/webhook",
 				"stripe_cancel_subscription": "/stripe/cancel-subscription",
 				"token_balance": "/tokens/balance/<user_profile_id>",
-				"token_history": "/tokens/history/<user_profile_id>"
+				"token_history": "/tokens/history/<user_profile_id>",
+				"essay_analyze": "/essay/analyze",
+				"essay_generate_ideas": "/essay/generate-ideas"
 			}
 		}), HTTPStatus.OK
 	
@@ -268,6 +270,245 @@ def register_routes(app: Flask) -> None:
 			"status": "healthy",
 			"message": "PG Admit API is running"
 		}), HTTPStatus.OK
+
+	# =======================================================
+	# Essay Services Endpoints (with token consumption)
+	# =======================================================
+
+	@app.post("/essay/analyze")
+	def analyze_essay():
+		"""
+		Analyze an essay and provide comprehensive feedback.
+		Consumes tokens: essay_feedback (25 tokens)
+		
+		POST /essay/analyze
+		Body: {
+			"user_profile_id": int (required),
+			"essay_text": str (required),
+			"essay_type": str (required)
+		}
+		"""
+		try:
+			data = request.get_json()
+			if not data:
+				return jsonify({"error": "Request body is required"}), HTTPStatus.BAD_REQUEST
+
+			user_profile_id = data.get("user_profile_id")
+			essay_text = data.get("essay_text")
+			essay_type = data.get("essay_type")
+
+			if not user_profile_id:
+				return jsonify({"error": "user_profile_id is required"}), HTTPStatus.BAD_REQUEST
+			if not essay_text:
+				return jsonify({"error": "essay_text is required"}), HTTPStatus.BAD_REQUEST
+			if not essay_type:
+				return jsonify({"error": "essay_type is required"}), HTTPStatus.BAD_REQUEST
+
+			# Consume tokens before processing
+			success, token_result = _consume_tokens(
+				user_profile_id=int(user_profile_id),
+				feature_key="essay_feedback",
+				source="essay_analyze_api",
+				metadata={"essay_type": essay_type},
+			)
+			if not success:
+				return jsonify({
+					"error": "Insufficient tokens",
+					"details": token_result
+				}), HTTPStatus.PAYMENT_REQUIRED
+
+			# Call Cerebras API
+			cerebras_api_key = os.getenv("CEREBRAS_API_KEY")
+			if not cerebras_api_key:
+				return jsonify({"error": "Cerebras API key not configured"}), HTTPStatus.INTERNAL_SERVER_ERROR
+
+			system_prompt = f"""You are an expert college admissions essay coach with years of experience helping students craft compelling personal statements. 
+
+Analyze the following {essay_type} essay and provide detailed feedback. Your response MUST be valid JSON in this exact format:
+{{
+  "overallScore": <number 0-100>,
+  "items": [
+    {{"id": "1", "type": "strength", "text": "<specific strength>"}},
+    {{"id": "2", "type": "strength", "text": "<another strength>"}},
+    {{"id": "3", "type": "improvement", "text": "<area needing improvement>"}},
+    {{"id": "4", "type": "improvement", "text": "<another improvement area>"}},
+    {{"id": "5", "type": "suggestion", "text": "<actionable suggestion>"}},
+    {{"id": "6", "type": "suggestion", "text": "<another suggestion>"}},
+    {{"id": "7", "type": "insight", "text": "<admissions insight>"}},
+    {{"id": "8", "type": "insight", "text": "<another insight>"}}
+  ]
+}}
+
+Evaluate on:
+- Opening hook and engagement
+- Authenticity and personal voice
+- Structure and flow
+- Specific examples and storytelling
+- Grammar and word choice
+- Connection to the essay prompt/type
+- Overall impact for admissions"""
+
+			user_prompt = f"Please analyze this {essay_type} essay:\n\n{essay_text}"
+
+			cerebras_response = requests.post(
+				"https://api.cerebras.ai/v1/chat/completions",
+				json={
+					"model": "llama3.1-8b",
+					"messages": [
+						{"role": "system", "content": system_prompt},
+						{"role": "user", "content": user_prompt}
+					],
+					"max_tokens": 2000,
+					"temperature": 0.7,
+				},
+				headers={
+					"Authorization": f"Bearer {cerebras_api_key}",
+					"Content-Type": "application/json",
+				},
+				timeout=60,
+			)
+
+			if cerebras_response.status_code != 200:
+				return jsonify({
+					"error": f"Cerebras API error: {cerebras_response.text}"
+				}), HTTPStatus.INTERNAL_SERVER_ERROR
+
+			response_data = cerebras_response.json()
+			content = response_data.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+			# Parse JSON from response
+			import re
+			json_match = re.search(r'\{[\s\S]*\}', content)
+			if json_match:
+				parsed = json.loads(json_match.group(0))
+				return jsonify(parsed), HTTPStatus.OK
+
+			return jsonify({"error": "Failed to parse AI response"}), HTTPStatus.INTERNAL_SERVER_ERROR
+
+		except json.JSONDecodeError as e:
+			return jsonify({"error": f"Invalid JSON in response: {str(e)}"}), HTTPStatus.INTERNAL_SERVER_ERROR
+		except Exception as e:
+			print(f"❌ ERROR in /essay/analyze: {str(e)}")
+			import traceback
+			print(traceback.format_exc())
+			return jsonify({"error": str(e)}), HTTPStatus.INTERNAL_SERVER_ERROR
+
+	@app.post("/essay/generate-ideas")
+	def generate_essay_ideas():
+		"""
+		Generate essay ideas based on user input.
+		Consumes tokens: essay_brainstorm (10 tokens)
+		
+		POST /essay/generate-ideas
+		Body: {
+			"user_profile_id": int (required),
+			"topic": str (optional),
+			"cogins1": str (optional),
+			"cogins2": str (optional),
+			"key_experiences": str (optional),
+			"tags": list[str] (optional)
+		}
+		"""
+		try:
+			data = request.get_json()
+			if not data:
+				return jsonify({"error": "Request body is required"}), HTTPStatus.BAD_REQUEST
+
+			user_profile_id = data.get("user_profile_id")
+			if not user_profile_id:
+				return jsonify({"error": "user_profile_id is required"}), HTTPStatus.BAD_REQUEST
+
+			# Consume tokens before processing
+			success, token_result = _consume_tokens(
+				user_profile_id=int(user_profile_id),
+				feature_key="essay_brainstorm",
+				source="essay_generate_ideas_api",
+				metadata={
+					"topic": data.get("topic"),
+					"tags": data.get("tags", []),
+				},
+			)
+			if not success:
+				return jsonify({
+					"error": "Insufficient tokens",
+					"details": token_result
+				}), HTTPStatus.PAYMENT_REQUIRED
+
+			# Call Cerebras API
+			cerebras_api_key = os.getenv("CEREBRAS_API_KEY")
+			if not cerebras_api_key:
+				return jsonify({"error": "Cerebras API key not configured"}), HTTPStatus.INTERNAL_SERVER_ERROR
+
+			system_prompt = """You are a creative college admissions essay brainstorming coach. Generate unique, compelling essay ideas based on the student's input.
+
+Your response MUST be valid JSON in this exact format:
+{
+  "ideas": [
+    {"id": "1", "text": "<detailed essay idea with angle and approach>"},
+    {"id": "2", "text": "<another unique essay idea>"},
+    {"id": "3", "text": "<creative alternative approach>"},
+    {"id": "4", "text": "<unexpected angle on the topic>"},
+    {"id": "5", "text": "<personal growth focused idea>"}
+  ]
+}
+
+Each idea should be 2-3 sentences explaining the concept, angle, and how to make it compelling."""
+
+			user_prompt = "Generate essay ideas based on:\n"
+			if data.get("topic"):
+				user_prompt += f"\nTopic/Theme: {data.get('topic')}"
+			if data.get("cogins1"):
+				user_prompt += f"\nContext 1: {data.get('cogins1')}"
+			if data.get("cogins2"):
+				user_prompt += f"\nContext 2: {data.get('cogins2')}"
+			if data.get("key_experiences"):
+				user_prompt += f"\nKey Experiences: {data.get('key_experiences')}"
+			if data.get("tags") and len(data.get("tags", [])):
+				user_prompt += f"\nThemes to incorporate: {', '.join(data.get('tags', []))}"
+
+			cerebras_response = requests.post(
+				"https://api.cerebras.ai/v1/chat/completions",
+				json={
+					"model": "llama3.1-8b",
+					"messages": [
+						{"role": "system", "content": system_prompt},
+						{"role": "user", "content": user_prompt}
+					],
+					"max_tokens": 2000,
+					"temperature": 0.7,
+				},
+				headers={
+					"Authorization": f"Bearer {cerebras_api_key}",
+					"Content-Type": "application/json",
+				},
+				timeout=60,
+			)
+
+			if cerebras_response.status_code != 200:
+				return jsonify({
+					"error": f"Cerebras API error: {cerebras_response.text}"
+				}), HTTPStatus.INTERNAL_SERVER_ERROR
+
+			response_data = cerebras_response.json()
+			content = response_data.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+			# Parse JSON from response
+			import re
+			json_match = re.search(r'\{[\s\S]*\}', content)
+			if json_match:
+				parsed = json.loads(json_match.group(0))
+				ideas = parsed.get("ideas", [])
+				return jsonify({"ideas": ideas}), HTTPStatus.OK
+
+			return jsonify({"error": "Failed to parse AI response"}), HTTPStatus.INTERNAL_SERVER_ERROR
+
+		except json.JSONDecodeError as e:
+			return jsonify({"error": f"Invalid JSON in response: {str(e)}"}), HTTPStatus.INTERNAL_SERVER_ERROR
+		except Exception as e:
+			print(f"❌ ERROR in /essay/generate-ideas: {str(e)}")
+			import traceback
+			print(traceback.format_exc())
+			return jsonify({"error": str(e)}), HTTPStatus.INTERNAL_SERVER_ERROR
 
 	@app.get("/tokens/balance/<int:user_profile_id>")
 	def get_token_balance(user_profile_id: int):
@@ -2498,6 +2739,7 @@ def register_routes(app: Flask) -> None:
 		# Handle the event
 		event_type = event["type"]
 		event_data = event["data"]["object"]
+		print(f"📥 Webhook received: {event_type} (event_id={event.get('id')})")
 		
 		try:
 			supabase = get_supabase()
@@ -2622,6 +2864,7 @@ def register_routes(app: Flask) -> None:
 						# Credit initial plan tokens
 						tokens_to_credit = PLAN_TOKEN_GRANTS.get(plan_id)
 						if tokens_to_credit:
+							print(f"💰 Crediting {tokens_to_credit} tokens to user {user_profile_id} for subscription_created (plan={plan_name}, plan_id={plan_id})")
 							_credit_tokens(
 								user_profile_id=int(user_profile_id),
 								amount=tokens_to_credit,
@@ -2635,6 +2878,9 @@ def register_routes(app: Flask) -> None:
 									"plan_name": plan_name,
 								},
 							)
+							print(f"✅ Token credit completed for user {user_profile_id}")
+						else:
+							print(f"⚠️  WARNING: No token grant configured for plan_id={plan_id}")
 					except Exception as e:
 						error_str = str(e)
 						if "Could not find the table" in error_str or "PGRST205" in error_str:
@@ -2689,6 +2935,7 @@ def register_routes(app: Flask) -> None:
 				if user_profile_id:
 					subscription_id = None
 					plan_id = None
+					plan_name = None
 
 					# Find subscription in database (handle missing table gracefully)
 					try:
@@ -2697,11 +2944,36 @@ def register_routes(app: Flask) -> None:
 							if sub_resp.data:
 								subscription_id = sub_resp.data[0]["id"]
 								plan_id = sub_resp.data[0].get("plan_id")
+								print(f"✅ Found subscription in database: plan_id={plan_id}")
 					except Exception as e:
 						if "Could not find the table" in str(e) or "PGRST205" in str(e):
 							print(f"WARNING: user_subscriptions table not found when logging invoice payment")
 						else:
 							print(f"WARNING: Error fetching subscription for invoice payment: {e}")
+					
+					# If plan_id not found from database, try to get it from invoice price_id (fallback)
+					if not plan_id and invoice.get("subscription") and invoice.get("lines", {}).get("data"):
+						try:
+							# Get price_id from invoice line items
+							for line in invoice["lines"]["data"]:
+								price = line.get("price") or {}
+								price_id = price.get("id")
+								if price_id:
+									# Determine plan_id from price_id (same logic as subscription.created)
+									# Tier 2 – INR 999/month
+									if "price_1SfKELGMytl1afSZ2ZoOMePT" in price_id:
+										plan_id = "pro"
+										plan_name = "Tier 2"
+										break
+									# Tier 3 – INR 1,799/month
+									elif "price_1SfKEuGMytl1afSZP7SnBVOn" in price_id:
+										plan_id = "team"
+										plan_name = "Tier 3"
+										break
+							if plan_id:
+								print(f"✅ Determined plan_id={plan_id} from invoice price_id (fallback method)")
+						except Exception as e:
+							print(f"WARNING: Error determining plan_id from invoice price_id: {e}")
 					
 					# Try to log payment (handle missing table gracefully)
 					try:
@@ -2725,21 +2997,41 @@ def register_routes(app: Flask) -> None:
 							print(f"WARNING: Could not log invoice payment to database: {str(e)}")
 
 					# Credit recurring plan tokens for subscription invoices
-					if plan_id and invoice.get("subscription"):
-						tokens_to_credit = PLAN_TOKEN_GRANTS.get(plan_id)
-						if tokens_to_credit:
-							_credit_tokens(
-								user_profile_id=int(user_profile_id),
-								amount=tokens_to_credit,
-								reason="subscription_cycle",
-								source="stripe_webhook",
-								feature_key=None,
-								metadata={
-									"stripe_invoice_id": invoice["id"],
-									"stripe_subscription_id": invoice.get("subscription"),
-									"plan_id": plan_id,
-								},
-							)
+					if invoice.get("subscription"):
+						if plan_id:
+							# Check if this is the first invoice (subscription creation)
+							# If billing_reason is "subscription_create", tokens were already credited in customer.subscription.created
+							# So we skip crediting here to avoid double-crediting
+							billing_reason = invoice.get("billing_reason")
+							if billing_reason == "subscription_create":
+								print(f"ℹ️  INFO: First invoice (subscription_create) - tokens already credited in customer.subscription.created event. Skipping to avoid double-credit.")
+							else:
+								# This is a recurring payment - credit tokens
+								tokens_to_credit = PLAN_TOKEN_GRANTS.get(plan_id)
+								if tokens_to_credit:
+									print(f"💰 Crediting {tokens_to_credit} tokens to user {user_profile_id} for subscription_cycle (plan_id={plan_id}, plan_name={plan_name or 'N/A'}, invoice={invoice.get('id')}, billing_reason={billing_reason})")
+									_credit_tokens(
+										user_profile_id=int(user_profile_id),
+										amount=tokens_to_credit,
+										reason="subscription_cycle",
+										source="stripe_webhook",
+										feature_key=None,
+										metadata={
+											"stripe_invoice_id": invoice["id"],
+											"stripe_subscription_id": invoice.get("subscription"),
+											"plan_id": plan_id,
+											"plan_name": plan_name,
+											"billing_reason": billing_reason,
+										},
+									)
+									print(f"✅ Token credit completed for user {user_profile_id}")
+								else:
+									print(f"⚠️  WARNING: No token grant configured for plan_id={plan_id} in subscription_cycle")
+						else:
+							print(f"⚠️  WARNING: Could not determine plan_id for subscription invoice {invoice.get('id')} - skipping token credit")
+							print(f"   Invoice details: subscription={invoice.get('subscription')}, lines={len(invoice.get('lines', {}).get('data', []))}")
+					else:
+						print(f"ℹ️  INFO: Invoice {invoice.get('id')} has no subscription (one-time payment) - checking for token packs...")
 
 					# Handle one-time token packs (no subscription) if configured
 					if not invoice.get("subscription") and invoice.get("lines"):
