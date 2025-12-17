@@ -117,39 +117,61 @@ def _credit_tokens(
 		return
 
 	def _fallback_db_credit() -> None:
-		"""Direct DB update if RPC path is unavailable."""
-		try:
-			supabase = get_supabase()
+		"""Direct DB update if RPC path is unavailable. Includes retry logic for connection errors."""
+		max_retries = 3
+		retry_delay = 1  # seconds
+		
+		for attempt in range(max_retries):
+			try:
+				supabase = get_supabase()
 
-			# Get current balance
-			profile_resp = supabase.table("user_profile").select("token_balance").eq("id", user_profile_id).execute()
-			if not profile_resp.data:
-				print(f"⚠️  WARNING: Could not credit tokens – user_profile {user_profile_id} not found")
-				return
+				# Get current balance
+				profile_resp = supabase.table("user_profile").select("token_balance").eq("id", user_profile_id).execute()
+				if not profile_resp.data:
+					print(f"⚠️  WARNING: Could not credit tokens – user_profile {user_profile_id} not found")
+					return
 
-			current_balance = profile_resp.data[0].get("token_balance") or 0
-			new_balance = current_balance + amount
+				current_balance = profile_resp.data[0].get("token_balance") or 0
+				new_balance = current_balance + amount
 
-			# Update balance
-			supabase.table("user_profile").update({
-				"token_balance": new_balance,
-				"updated_at": datetime.now().isoformat(),
-			}).eq("id", user_profile_id).execute()
+				# Update balance
+				supabase.table("user_profile").update({
+					"token_balance": new_balance,
+					"updated_at": datetime.now().isoformat(),
+				}).eq("id", user_profile_id).execute()
 
-			# Insert ledger row
-			supabase.table("token_transactions").insert({
-				"user_profile_id": user_profile_id,
-				"delta": amount,
-				"balance_after": new_balance,
-				"reason": reason,
-				"feature": feature_key,
-				"source": source,
-				"metadata": metadata or {},
-			}).execute()
+				# Insert ledger row
+				supabase.table("token_transactions").insert({
+					"user_profile_id": user_profile_id,
+					"delta": amount,
+					"balance_after": new_balance,
+					"reason": reason,
+					"feature": feature_key,
+					"source": source,
+					"metadata": metadata or {},
+				}).execute()
 
-			print(f"✅ Tokens credited via fallback DB path: user={user_profile_id}, amount={amount}, balance={new_balance}")
-		except Exception as inner_exc:
-			print(f"❌ ERROR in fallback token credit for user {user_profile_id}: {inner_exc}")
+				print(f"✅ Tokens credited via fallback DB path: user={user_profile_id}, amount={amount}, balance={new_balance}")
+				return  # Success - exit retry loop
+			except Exception as inner_exc:
+				error_str = str(inner_exc)
+				is_connection_error = any(keyword in error_str.lower() for keyword in [
+					"connection", "terminated", "timeout", "network", "remote", "protocol"
+				])
+				
+				if is_connection_error and attempt < max_retries - 1:
+					print(f"⚠️  Connection error in fallback token credit (attempt {attempt + 1}/{max_retries}): {error_str}")
+					import time
+					time.sleep(retry_delay)
+					retry_delay *= 2  # Exponential backoff
+					continue
+				
+				# Final attempt failed or non-retryable error
+				print(f"❌ ERROR in fallback token credit for user {user_profile_id}: {inner_exc}")
+				if attempt == max_retries - 1:
+					import traceback
+					print(f"Traceback: {traceback.format_exc()}")
+				return  # Exit retry loop
 
 	try:
 		supabase = get_supabase()
@@ -196,29 +218,54 @@ def _validate_user_exists(user_profile_id: int) -> tuple[bool, dict]:
 	Returns (exists, response_data) where response_data is None if user exists,
 	or error response dict if user doesn't exist.
 	"""
-	try:
-		supabase = get_supabase()
-		profile_resp = supabase.table("user_profile").select("id").eq("id", user_profile_id).execute()
-		
-		if not profile_resp.data:
+	max_retries = 3
+	retry_delay = 1  # seconds
+	
+	for attempt in range(max_retries):
+		try:
+			supabase = get_supabase()
+			profile_resp = supabase.table("user_profile").select("id").eq("id", user_profile_id).execute()
+			
+			if not profile_resp.data:
+				return False, {
+					"error": f"User profile {user_profile_id} not found",
+					"user_profile_id": user_profile_id,
+					"suggestion": "Please verify the user_profile_id exists in the database"
+				}
+			
+			return True, None
+		except Exception as exc:
+			error_details = str(exc)
+			error_type = type(exc).__name__
+			
+			# Check if it's a connection error that might be retryable
+			is_connection_error = any(keyword in error_details.lower() for keyword in [
+				"connection", "terminated", "timeout", "network", "remote", "protocol"
+			])
+			
+			if is_connection_error and attempt < max_retries - 1:
+				print(f"⚠️  Connection error in _validate_user_exists (attempt {attempt + 1}/{max_retries}): {error_details}")
+				import time
+				time.sleep(retry_delay)
+				retry_delay *= 2  # Exponential backoff
+				continue
+			
+			# Log the full error for debugging
+			import traceback
+			print(f"ERROR in _validate_user_exists: {error_details}")
+			print(f"Traceback: {traceback.format_exc()}")
 			return False, {
-				"error": f"User profile {user_profile_id} not found",
+				"error": f"Failed to validate user profile: {error_details}",
 				"user_profile_id": user_profile_id,
-				"suggestion": "Please verify the user_profile_id exists in the database"
+				"error_type": error_type
 			}
-		
-		return True, None
-	except Exception as exc:
-		# Log the full error for debugging
-		import traceback
-		error_details = str(exc)
-		print(f"ERROR in _validate_user_exists: {error_details}")
-		print(f"Traceback: {traceback.format_exc()}")
-		return False, {
-			"error": f"Failed to validate user profile: {str(exc)}",
-			"user_profile_id": user_profile_id,
-			"error_type": type(exc).__name__
-		}
+	
+	# Should never reach here, but just in case
+	return False, {
+		"error": f"Failed to validate user profile after {max_retries} attempts",
+		"user_profile_id": user_profile_id,
+		"error_type": "MaxRetriesExceeded"
+	}
 
 def register_routes(app: Flask) -> None:
 	# Handle CORS preflight requests explicitly (Flask has no native app.options helper)
@@ -3110,17 +3157,24 @@ Each idea should be 2-3 sentences explaining the concept, angle, and how to make
 					raise
 			
 			# If no customer_id, search Stripe by metadata
+			# Note: Stripe Customer.list() doesn't support metadata filtering directly
+			# We need to list customers and check metadata manually
 			if not customer_id:
-				customers = stripe.Customer.list(limit=100, metadata={"user_profile_id": str(user_profile_id)})
-				if customers.data:
-					customer_id = customers.data[0].id
-					# Try to save it if column exists
-					try:
-						supabase.table("user_profile").update({
-							"stripe_customer_id": customer_id
-						}).eq("id", user_profile_id).execute()
-					except:
-						pass  # Column might not exist
+				try:
+					customers = stripe.Customer.list(limit=100)
+					for customer in customers.data:
+						if customer.metadata and customer.metadata.get("user_profile_id") == str(user_profile_id):
+							customer_id = customer.id
+							# Try to save it if column exists
+							try:
+								supabase.table("user_profile").update({
+									"stripe_customer_id": customer_id
+								}).eq("id", user_profile_id).execute()
+							except:
+								pass  # Column might not exist
+							break
+				except Exception as e:
+					print(f"WARNING: Error searching Stripe customers: {e}")
 			
 			if not customer_id:
 				return jsonify({"error": "No Stripe customer found for this user"}), HTTPStatus.NOT_FOUND
