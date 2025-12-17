@@ -2795,15 +2795,17 @@ def register_routes(app: Flask) -> None:
 			currency = price_obj["currency"]
 			interval = price_obj["recurring"]["interval"]
 			
-			# Determine plan_id from price_id
+			# Determine plan_id from price_id (keep in sync with webhook + frontend)
 			plan_id = "starter"
-			plan_name = "Starter"
-			if "price_1SdCFdGMytl1afSZCgtVvtzF" in price_id:
+			plan_name = "Free"
+			# Tier 2 – INR 999/month
+			if "price_1SfKELGMytl1afSZ2ZoOMePT" in price_id:
 				plan_id = "pro"
-				plan_name = "Pro"
-			elif "price_1SdCFwGMytl1afSZtpoRPzhd" in price_id:
+				plan_name = "Tier 2"
+			# Tier 3 – INR 1,799/month
+			elif "price_1SfKEuGMytl1afSZP7SnBVOn" in price_id:
 				plan_id = "team"
-				plan_name = "Team"
+				plan_name = "Tier 3"
 			
 			# Save to database
 			try:
@@ -2841,6 +2843,24 @@ def register_routes(app: Flask) -> None:
 				else:
 					# Insert new
 					supabase.table("user_subscriptions").insert(sub_data).execute()
+
+					# Credit initial plan tokens on first sync if applicable
+					tokens_to_credit = PLAN_TOKEN_GRANTS.get(plan_id)
+					if tokens_to_credit and subscription["status"] in ("active", "trialing"):
+						_credit_tokens(
+							user_profile_id=int(user_profile_id),
+							amount=tokens_to_credit,
+							reason="subscription_synced",
+							source="stripe_sync_subscription",
+							feature_key=None,
+							metadata={
+								"stripe_subscription_id": subscription_id,
+								"price_id": price_id,
+								"plan_id": plan_id,
+								"plan_name": plan_name,
+							},
+						)
+
 					return jsonify({
 						"message": "Subscription synced successfully",
 						"subscription_id": subscription_id,
