@@ -3323,10 +3323,47 @@ Each idea should be 2-3 sentences explaining the concept, angle, and how to make
 					supabase.table("user_subscriptions").insert(sub_data).execute()
 					print(f"✅ Subscription inserted into database: {subscription_id}")
 
-				# Credit tokens regardless of whether subscription was updated or inserted
-				# This ensures tokens are credited even if there was a previous error
+				# Check if tokens were already credited for this subscription in the current period
+				# This prevents duplicate crediting on page refresh or multiple sync calls
+				should_credit_tokens = False
 				tokens_to_credit = PLAN_TOKEN_GRANTS.get(plan_id)
+				
 				if tokens_to_credit and subscription["status"] in ("active", "trialing"):
+					# Check if we already credited tokens for this subscription in the current billing period
+					try:
+						# Get current period start from subscription
+						period_start = safe_timestamp_to_iso(subscription.get("current_period_start"))
+						if period_start:
+							# Check token_transactions for recent credits for this subscription
+							recent_credits = supabase.table("token_transactions").select("*").eq("user_profile_id", user_profile_id).eq("reason", "subscription_synced").gte("created_at", period_start).execute()
+							
+							# Check if any recent credit matches this subscription
+							already_credited = False
+							if recent_credits.data:
+								for tx in recent_credits.data:
+									tx_metadata = tx.get("metadata", {})
+									if isinstance(tx_metadata, str):
+										try:
+											tx_metadata = json.loads(tx_metadata)
+										except:
+											tx_metadata = {}
+									if tx_metadata.get("stripe_subscription_id") == subscription_id:
+										already_credited = True
+										print(f"ℹ️  Tokens already credited for subscription {subscription_id} in current period (transaction {tx.get('id')})")
+										break
+							
+							if not already_credited:
+								should_credit_tokens = True
+						else:
+							# If we can't determine period, only credit if subscription is new (not in existing.data)
+							should_credit_tokens = not existing.data
+					except Exception as check_error:
+						# If check fails, only credit for new subscriptions
+						print(f"⚠️  Could not check for duplicate credits: {check_error}")
+						should_credit_tokens = not existing.data
+				
+				# Credit tokens only if needed
+				if should_credit_tokens:
 					print(f"💰 Crediting {tokens_to_credit} tokens to user {user_profile_id} for subscription sync (plan={plan_name}, plan_id={plan_id})")
 					_credit_tokens(
 						user_profile_id=int(user_profile_id),
@@ -3342,6 +3379,8 @@ Each idea should be 2-3 sentences explaining the concept, angle, and how to make
 						},
 					)
 					print(f"✅ Token credit completed for user {user_profile_id}")
+				elif tokens_to_credit:
+					print(f"ℹ️  Skipping token credit - already credited for this subscription period")
 
 				return jsonify({
 					"message": "Subscription synced successfully" if not existing.data else "Subscription synced and updated",
