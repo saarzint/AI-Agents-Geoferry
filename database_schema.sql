@@ -14,9 +14,216 @@ create table if not exists public.user_profile (
     financial_aid_eligibility boolean default false,-- Interested/eligible for aid/scholarships
     budget integer,                                 -- Tuition/budget
     preferences jsonb,                              -- location, campus size, environment, etc.
+    token_balance integer not null default 25,      -- Tokens available for this user (initial free tokens)
     created_at timestamptz default now(),
     updated_at timestamptz default now()
 );
+
+-- Ensure token_balance exists on existing deployments
+alter table public.user_profile
+    add column if not exists token_balance integer not null default 25;
+
+-- Ensure default is set to 25 tokens for new users
+alter table public.user_profile
+    alter column token_balance set default 25;
+
+-- Backfill existing users that do not yet have tokens (safe because token_balance is new)
+update public.user_profile
+set token_balance = 25
+where token_balance is null or token_balance = 0;
+
+-- =======================================================
+-- Token Transactions & Helpers
+-- =======================================================
+
+-- Ledger of all token changes per user (credits, debits, refunds)
+create table if not exists public.token_transactions (
+    id serial primary key,
+    user_profile_id int not null references public.user_profile(id) on delete cascade,
+    delta integer not null,                           -- +N for credit, -N for debit
+    balance_after integer not null,                   -- balance after applying delta
+    reason text not null,                             -- short reason, e.g. 'subscription_cycle', 'agent_call', 'refund'
+    feature text,                                     -- optional feature key, e.g. 'university_search'
+    source text,                                      -- system source, e.g. 'stripe_webhook', 'api'
+    metadata jsonb default '{}',                      -- extra context (Stripe IDs, request payload hashes, etc.)
+    created_at timestamptz not null default now()
+);
+
+create index if not exists idx_token_transactions_user_created
+    on public.token_transactions (user_profile_id, created_at desc);
+
+-- Enable RLS + temporary open policy (same pattern as other MVP tables)
+alter table public.token_transactions enable row level security;
+create policy if not exists "Allow all on token_transactions"
+    on public.token_transactions
+    for all
+    using (true);
+
+
+-- =======================================================
+-- Token Utility Functions
+-- =======================================================
+
+-- Safely consume tokens for a given user in a single transaction.
+-- Returns a JSONB object:
+--   { "success": true, "balance": 275 }
+--   { "success": false, "error": "INSUFFICIENT_TOKENS", "balance": 10 }
+create or replace function public.consume_tokens(
+    p_user_profile_id int,
+    p_cost integer,
+    p_feature text,
+    p_source text,
+    p_metadata jsonb default '{}'::jsonb
+)
+returns jsonb
+language plpgsql
+as $$
+declare
+    v_balance integer;
+    v_new_balance integer;
+    v_result jsonb;
+begin
+    if p_cost is null or p_cost <= 0 then
+        return jsonb_build_object(
+            'success', false,
+            'error', 'INVALID_COST'
+        );
+    end if;
+
+    select token_balance
+    into v_balance
+    from public.user_profile
+    where id = p_user_profile_id
+    for update;
+
+    if v_balance is null then
+        return jsonb_build_object(
+            'success', false,
+            'error', 'USER_NOT_FOUND'
+        );
+    end if;
+
+    if v_balance < p_cost then
+        return jsonb_build_object(
+            'success', false,
+            'error', 'INSUFFICIENT_TOKENS',
+            'balance', v_balance
+        );
+    end if;
+
+    v_new_balance := v_balance - p_cost;
+
+    update public.user_profile
+    set token_balance = v_new_balance,
+        updated_at = now()
+    where id = p_user_profile_id;
+
+    insert into public.token_transactions (
+        user_profile_id,
+        delta,
+        balance_after,
+        reason,
+        feature,
+        source,
+        metadata
+    ) values (
+        p_user_profile_id,
+        -p_cost,
+        v_new_balance,
+        'debit',
+        p_feature,
+        p_source,
+        coalesce(p_metadata, '{}'::jsonb)
+    );
+
+    return jsonb_build_object(
+        'success', true,
+        'balance', v_new_balance
+    );
+exception
+    when others then
+        return jsonb_build_object(
+            'success', false,
+            'error', SQLERRM
+        );
+end;
+$$;
+
+
+-- Credit tokens to a user (for subscription cycles, top-ups, refunds, etc.).
+-- Returns: { "success": true, "balance": 325 }
+create or replace function public.credit_tokens(
+    p_user_profile_id int,
+    p_amount integer,
+    p_reason text,
+    p_source text,
+    p_feature text default null,
+    p_metadata jsonb default '{}'::jsonb
+)
+returns jsonb
+language plpgsql
+as $$
+declare
+    v_balance integer;
+    v_new_balance integer;
+begin
+    if p_amount is null or p_amount <= 0 then
+        return jsonb_build_object(
+            'success', false,
+            'error', 'INVALID_AMOUNT'
+        );
+    end if;
+
+    select token_balance
+    into v_balance
+    from public.user_profile
+    where id = p_user_profile_id
+    for update;
+
+    if v_balance is null then
+        return jsonb_build_object(
+            'success', false,
+            'error', 'USER_NOT_FOUND'
+        );
+    end if;
+
+    v_new_balance := v_balance + p_amount;
+
+    update public.user_profile
+    set token_balance = v_new_balance,
+        updated_at = now()
+    where id = p_user_profile_id;
+
+    insert into public.token_transactions (
+        user_profile_id,
+        delta,
+        balance_after,
+        reason,
+        feature,
+        source,
+        metadata
+    ) values (
+        p_user_profile_id,
+        p_amount,
+        v_new_balance,
+        p_reason,
+        p_feature,
+        p_source,
+        coalesce(p_metadata, '{}'::jsonb)
+    );
+
+    return jsonb_build_object(
+        'success', true,
+        'balance', v_new_balance
+    );
+exception
+    when others then
+        return jsonb_build_object(
+            'success', false,
+            'error', SQLERRM
+        );
+end;
+$$;
 
 -- reference table for universities (optional bootstrap/mock data)
 create table if not exists public.universities (

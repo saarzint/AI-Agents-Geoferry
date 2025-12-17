@@ -5,6 +5,7 @@ import sys
 import os
 import re
 from datetime import datetime, timedelta
+from typing import Any, Dict, Optional, Tuple
 from .supabase_client import get_supabase
 from .utils import _generate_visa_report, _generate_html_report, _detect_visa_changes
 
@@ -17,6 +18,125 @@ from app.checklist_formatter import to_json_with_labels, to_markdown
 agents_path = os.path.join(os.path.dirname(__file__), '..', 'agents', 'src')
 sys.path.append(os.path.abspath(agents_path))
 
+# =======================================================
+# Token & Billing Configuration
+# =======================================================
+
+# Tokens granted per billing cycle for each subscription plan.
+# Keep this in sync with frontend plan configuration and Stripe price IDs.
+PLAN_TOKEN_GRANTS: Dict[str, int] = {
+	"starter": 25,   # Free tier
+	"pro": 300,      # Tier 2
+	"team": 600,     # Tier 3
+}
+
+# Optional: one-time token pack(s) mapped by Stripe price_id → tokens granted.
+# Populate these when you create Stripe prices for top-ups.
+ONE_TIME_TOKEN_PACKS_BY_PRICE_ID: Dict[str, int] = {
+	# "price_xxx": 100,  # Example: 100-token top-up
+}
+
+# Token costs per feature (per invocation)
+TOKEN_COSTS: Dict[str, Optional[int]] = {
+	"university_search": 25,
+	"scholarship_search": 25,
+	"visa_services": 50,
+	"essay_feedback": 25,
+	"essay_brainstorm": 10,
+	"voice_agent": None,  # TBD – no enforcement yet
+}
+
+
+def _consume_tokens(
+	user_profile_id: int,
+	feature_key: str,
+	source: str,
+	metadata: Optional[Dict[str, Any]] = None,
+) -> Tuple[bool, Dict[str, Any]]:
+	"""
+	Attempt to consume tokens for a given feature.
+	Returns (success, details_json).
+
+	If the consume_tokens RPC or token tables are missing, this will log a warning
+	and return (True, {"warning": "TOKENS_NOT_ENFORCED"}) so that agent flows
+	keep working until migrations are applied.
+	"""
+	cost = TOKEN_COSTS.get(feature_key)
+	if not cost or cost <= 0:
+		# No cost configured – treat as free for now
+		return True, {"warning": "NO_COST_CONFIGURED"}
+
+	try:
+		supabase = get_supabase()
+		payload = {
+			"p_user_profile_id": user_profile_id,
+			"p_cost": cost,
+			"p_feature": feature_key,
+			"p_source": source,
+			"p_metadata": metadata or {},
+		}
+		result = supabase.rpc("consume_tokens", payload).execute()
+		data = getattr(result, "data", None) or result  # supabase-py may return dict-like
+		if isinstance(data, dict) and data.get("success"):
+			return True, data
+
+		# If function is missing or table not found, don't block the main flow
+		error_msg = (data or {}).get("error") if isinstance(data, dict) else None
+		if error_msg and any(k in str(error_msg) for k in ("function consume_tokens", "PGRST", "does not exist")):
+			print("⚠️  WARNING: consume_tokens RPC not available. Token enforcement is disabled until migrations are applied.")
+			return True, {"warning": "TOKENS_NOT_ENFORCED"}
+
+		# Proper failure – likely insufficient tokens
+		return False, data if isinstance(data, dict) else {"error": "TOKEN_CONSUME_FAILED"}
+	except Exception as exc:
+		error_str = str(exc)
+		# Do not break core flows if infra is not ready; just log and allow
+		if any(k in error_str for k in ("consume_tokens", "PGRST", "does not exist")):
+			print(f"⚠️  WARNING: consume_tokens RPC error – token enforcement disabled: {error_str}")
+			return True, {"warning": "TOKENS_NOT_ENFORCED"}
+		print(f"❌ ERROR consuming tokens for user {user_profile_id}, feature={feature_key}: {error_str}")
+		return False, {"error": "TOKEN_CONSUME_EXCEPTION", "details": error_str}
+
+
+def _credit_tokens(
+	user_profile_id: int,
+	amount: int,
+	reason: str,
+	source: str,
+	feature_key: Optional[str] = None,
+	metadata: Optional[Dict[str, Any]] = None,
+) -> None:
+	"""
+	Credit tokens to a user using the credit_tokens RPC.
+	Logs warnings if migration is not yet applied but does not raise.
+	"""
+	if amount is None or amount <= 0:
+		return
+
+	try:
+		supabase = get_supabase()
+		payload = {
+			"p_user_profile_id": user_profile_id,
+			"p_amount": amount,
+			"p_reason": reason,
+			"p_source": source,
+			"p_feature": feature_key,
+			"p_metadata": metadata or {},
+		}
+		result = supabase.rpc("credit_tokens", payload).execute()
+		data = getattr(result, "data", None) or result
+		if isinstance(data, dict) and not data.get("success"):
+			error_msg = data.get("error")
+			if error_msg and any(k in str(error_msg) for k in ("function credit_tokens", "PGRST", "does not exist")):
+				print("⚠️  WARNING: credit_tokens RPC not available. Token credits not recorded until migrations are applied.")
+			else:
+				print(f"⚠️  WARNING: credit_tokens RPC returned error: {error_msg}")
+	except Exception as exc:
+		error_str = str(exc)
+		if any(k in error_str for k in ("credit_tokens", "PGRST", "does not exist")):
+			print(f"⚠️  WARNING: credit_tokens RPC error – token credits not recorded: {error_str}")
+		else:
+			print(f"❌ ERROR crediting tokens for user {user_profile_id}: {error_str}")
 def _validate_user_exists(user_profile_id: int) -> tuple[bool, dict]:
 	"""
 	Validate if a user profile exists in the database.
@@ -83,7 +203,9 @@ def register_routes(app: Flask) -> None:
 				"stripe_get_payment_history": "/stripe/payment-history/<user_profile_id>",
 				"stripe_get_billing_info": "/stripe/billing-info/<user_profile_id>",
 				"stripe_webhook": "/stripe/webhook",
-				"stripe_cancel_subscription": "/stripe/cancel-subscription"
+				"stripe_cancel_subscription": "/stripe/cancel-subscription",
+				"token_balance": "/tokens/balance/<user_profile_id>",
+				"token_history": "/tokens/history/<user_profile_id>"
 			}
 		}), HTTPStatus.OK
 	
@@ -104,6 +226,33 @@ def register_routes(app: Flask) -> None:
 		
 		try:
 			supabase = get_supabase()
+
+			# Validate user exists
+			user_exists, error_response = _validate_user_exists(user_profile_id)
+			if not user_exists:
+				return jsonify(error_response), HTTPStatus.NOT_FOUND
+
+			# Token check & debit
+			token_ok, token_details = _consume_tokens(
+				user_profile_id=user_profile_id,
+				feature_key="university_search",
+				source="api:/search_universities",
+				metadata={"endpoint": "/search_universities"}
+			)
+			if not token_ok:
+				error_code = (token_details or {}).get("error")
+				if error_code == "INSUFFICIENT_TOKENS":
+					return jsonify({
+						"error": "INSUFFICIENT_TOKENS",
+						"message": "Not enough tokens to run University Match / Search.",
+						"required_tokens": TOKEN_COSTS.get("university_search"),
+						"current_balance": token_details.get("balance"),
+					}), HTTPStatus.PAYMENT_REQUIRED
+				# Fallback generic error
+				return jsonify({
+					"error": "TOKEN_CONSUME_FAILED",
+					"details": token_details,
+				}), HTTPStatus.INTERNAL_SERVER_ERROR
 			
 			# Get user profile snapshot for logging
 			profile_resp = supabase.table("user_profile").select("*").eq("id", user_profile_id).execute()
@@ -318,6 +467,63 @@ def register_routes(app: Flask) -> None:
 		except Exception as exc:
 			return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
 
+		@app.get("/tokens/balance/<int:user_profile_id>")
+		def get_token_balance(user_profile_id: int):
+			"""
+			Return the current token balance for a user.
+			"""
+			try:
+				user_exists, error_response = _validate_user_exists(user_profile_id)
+				if not user_exists:
+					return jsonify(error_response), HTTPStatus.NOT_FOUND
+				
+				supabase = get_supabase()
+				resp = supabase.table("user_profile").select("token_balance").eq("id", user_profile_id).execute()
+				if not resp.data:
+					return jsonify({"error": f"User profile {user_profile_id} not found"}), HTTPStatus.NOT_FOUND
+				
+				return jsonify({
+					"user_profile_id": user_profile_id,
+					"token_balance": resp.data[0].get("token_balance", 0)
+				}), HTTPStatus.OK
+			except Exception as exc:
+				return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
+
+		@app.get("/tokens/history/<int:user_profile_id>")
+		def get_token_history(user_profile_id: int):
+			"""
+			Return recent token transactions for a user (descending by created_at).
+			Optional query param: limit (default 50).
+			"""
+			try:
+				user_exists, error_response = _validate_user_exists(user_profile_id)
+				if not user_exists:
+					return jsonify(error_response), HTTPStatus.NOT_FOUND
+
+				limit_param = request.args.get("limit", "50")
+				try:
+					limit = max(1, min(int(limit_param), 200))
+				except ValueError:
+					limit = 50
+
+				supabase = get_supabase()
+				resp = (
+					supabase
+					.table("token_transactions")
+					.select("*")
+					.eq("user_profile_id", user_profile_id)
+					.order("created_at", desc=True)
+					.limit(limit)
+					.execute()
+				)
+				return jsonify({
+					"user_profile_id": user_profile_id,
+					"count": len(resp.data) if resp.data else 0,
+					"transactions": resp.data or []
+				}), HTTPStatus.OK
+			except Exception as exc:
+				return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
+
 	@app.get("/results/<int:user_profile_id>")
 	def get_results(user_profile_id: int):
 		try:
@@ -384,11 +590,40 @@ def register_routes(app: Flask) -> None:
 			supabase = get_supabase()
 			
 			# Verify user profile exists
+			user_exists, error_response = _validate_user_exists(user_profile_id)
+			if not user_exists:
+				return jsonify(error_response), HTTPStatus.NOT_FOUND
+
 			profile_resp = supabase.table("user_profile").select("*").eq("id", user_profile_id).execute()
 			if not profile_resp.data:
 				return jsonify({"error": f"User profile {user_profile_id} not found"}), HTTPStatus.NOT_FOUND
 			
 			user_profile = profile_resp.data[0]
+
+			# Token check & debit
+			token_ok, token_details = _consume_tokens(
+				user_profile_id=user_profile_id,
+				feature_key="scholarship_search",
+				source="api:/search_scholarships",
+				metadata={
+					"endpoint": "/search_scholarships",
+					"delta_search": delta_search,
+					"changed_fields": changed_fields,
+				},
+			)
+			if not token_ok:
+				error_code = (token_details or {}).get("error")
+				if error_code == "INSUFFICIENT_TOKENS":
+					return jsonify({
+						"error": "INSUFFICIENT_TOKENS",
+						"message": "Not enough tokens to run Scholarship Match / Search.",
+						"required_tokens": TOKEN_COSTS.get("scholarship_search"),
+						"current_balance": token_details.get("balance"),
+					}), HTTPStatus.PAYMENT_REQUIRED
+				return jsonify({
+					"error": "TOKEN_CONSUME_FAILED",
+					"details": token_details,
+				}), HTTPStatus.INTERNAL_SERVER_ERROR
 			
 			# SIMPLIFIED APPROACH: Always use unified full search logic
 			# This eliminates the complex delta vs full search distinction that was causing duplicates
@@ -701,6 +936,31 @@ def register_routes(app: Flask) -> None:
 		user_exists, error_response = _validate_user_exists(user_profile_id)
 		if not user_exists:
 			return jsonify(error_response), HTTPStatus.NOT_FOUND
+
+		# Token check & debit
+		token_ok, token_details = _consume_tokens(
+			user_profile_id=user_profile_id,
+			feature_key="visa_services",
+			source="api:/visa_info",
+			metadata={
+				"endpoint": "/visa_info",
+				"citizenship": citizenship,
+				"destination": destination,
+			},
+		)
+		if not token_ok:
+			error_code = (token_details or {}).get("error")
+			if error_code == "INSUFFICIENT_TOKENS":
+				return jsonify({
+					"error": "INSUFFICIENT_TOKENS",
+					"message": "Not enough tokens to run Visa Services.",
+					"required_tokens": TOKEN_COSTS.get("visa_services"),
+					"current_balance": token_details.get("balance"),
+				}), HTTPStatus.PAYMENT_REQUIRED
+			return jsonify({
+				"error": "TOKEN_CONSUME_FAILED",
+				"details": token_details,
+			}), HTTPStatus.INTERNAL_SERVER_ERROR
 		
 		try:
 			supabase = get_supabase()
@@ -2269,15 +2529,19 @@ def register_routes(app: Flask) -> None:
 					currency = price_obj["currency"]
 					interval = price_obj["recurring"]["interval"]
 					
-					# Determine plan_id from price_id (you may want to make this configurable)
-					plan_id = "starter"  # Default
-					plan_name = "Starter"  # Default
-					if "price_1SdCFdGMytl1afSZCgtVvtzF" in price_id:
+					# Determine plan_id from price_id (configurable mapping).
+					# Keep these in sync with Stripe and frontend Billing.tsx.
+					plan_id = "starter"  # Default / Free
+					plan_name = "Free"   # Match frontend naming
+
+					# Tier 2 – INR 999/month
+					if "price_1SfKELGMytl1afSZ2ZoOMePT" in price_id:
 						plan_id = "pro"
-						plan_name = "Pro"
-					elif "price_1SdCFwGMytl1afSZtpoRPzhd" in price_id:
+						plan_name = "Tier 2"
+					# Tier 3 – INR 1,799/month
+					elif "price_1SfKEuGMytl1afSZP7SnBVOn" in price_id:
 						plan_id = "team"
-						plan_name = "Team"
+						plan_name = "Tier 3"
 					
 					# Try to insert subscription (handle missing table gracefully)
 					try:
@@ -2300,6 +2564,23 @@ def register_routes(app: Flask) -> None:
 							"metadata": json.dumps(event_data.get("metadata", {}))
 						}).execute()
 						print(f"✅ Subscription created for user {user_profile_id}")
+
+						# Credit initial plan tokens
+						tokens_to_credit = PLAN_TOKEN_GRANTS.get(plan_id)
+						if tokens_to_credit:
+							_credit_tokens(
+								user_profile_id=int(user_profile_id),
+								amount=tokens_to_credit,
+								reason="subscription_created",
+								source="stripe_webhook",
+								feature_key=None,
+								metadata={
+									"stripe_subscription_id": subscription_id,
+									"price_id": price_id,
+									"plan_id": plan_id,
+									"plan_name": plan_name,
+								},
+							)
 					except Exception as e:
 						error_str = str(e)
 						if "Could not find the table" in error_str or "PGRST205" in error_str:
@@ -2339,7 +2620,7 @@ def register_routes(app: Flask) -> None:
 				print(f"Subscription cancelled: {subscription_id}")
 			
 			elif event_type == "invoice.payment_succeeded":
-				# Invoice payment succeeded - log in payment_history
+				# Invoice payment succeeded - log in payment_history and credit recurring tokens
 				invoice = event_data
 				customer_id = invoice["customer"]
 				
@@ -2348,20 +2629,25 @@ def register_routes(app: Flask) -> None:
 				try:
 					customer = stripe.Customer.retrieve(customer_id)
 					user_profile_id = customer.metadata.get("user_profile_id")
-				except:
+				except Exception:
 					pass
 				
-				if user_profile_id and invoice.get("subscription"):
-					# Find subscription in database (handle missing table gracefully)
+				if user_profile_id:
 					subscription_id = None
+					plan_id = None
+
+					# Find subscription in database (handle missing table gracefully)
 					try:
-						sub_resp = supabase.table("user_subscriptions").select("id").eq("stripe_subscription_id", invoice["subscription"]).execute()
-						subscription_id = sub_resp.data[0]["id"] if sub_resp.data else None
+						if invoice.get("subscription"):
+							sub_resp = supabase.table("user_subscriptions").select("id, plan_id").eq("stripe_subscription_id", invoice["subscription"]).execute()
+							if sub_resp.data:
+								subscription_id = sub_resp.data[0]["id"]
+								plan_id = sub_resp.data[0].get("plan_id")
 					except Exception as e:
 						if "Could not find the table" in str(e) or "PGRST205" in str(e):
 							print(f"WARNING: user_subscriptions table not found when logging invoice payment")
 						else:
-							pass
+							print(f"WARNING: Error fetching subscription for invoice payment: {e}")
 					
 					# Try to log payment (handle missing table gracefully)
 					try:
@@ -2383,6 +2669,46 @@ def register_routes(app: Flask) -> None:
 							print(f"WARNING: payment_history table not found. Payment logged in Stripe but not in database.")
 						else:
 							print(f"WARNING: Could not log invoice payment to database: {str(e)}")
+
+					# Credit recurring plan tokens for subscription invoices
+					if plan_id and invoice.get("subscription"):
+						tokens_to_credit = PLAN_TOKEN_GRANTS.get(plan_id)
+						if tokens_to_credit:
+							_credit_tokens(
+								user_profile_id=int(user_profile_id),
+								amount=tokens_to_credit,
+								reason="subscription_cycle",
+								source="stripe_webhook",
+								feature_key=None,
+								metadata={
+									"stripe_invoice_id": invoice["id"],
+									"stripe_subscription_id": invoice.get("subscription"),
+									"plan_id": plan_id,
+								},
+							)
+
+					# Handle one-time token packs (no subscription) if configured
+					if not invoice.get("subscription") and invoice.get("lines"):
+						try:
+							for line in invoice["lines"]["data"]:
+								price = line.get("price") or {}
+								price_id = price.get("id")
+								if price_id and price_id in ONE_TIME_TOKEN_PACKS_BY_PRICE_ID:
+									tokens = ONE_TIME_TOKEN_PACKS_BY_PRICE_ID[price_id]
+									_credit_tokens(
+										user_profile_id=int(user_profile_id),
+										amount=tokens,
+										reason="one_time_top_up",
+										source="stripe_webhook",
+										feature_key=None,
+										metadata={
+											"stripe_invoice_id": invoice["id"],
+											"price_id": price_id,
+										},
+									)
+									print(f"✅ Credited {tokens} tokens to user {user_profile_id} for one-time top-up (price_id={price_id})")
+						except Exception as e:
+							print(f"WARNING: Failed to credit one-time token pack from invoice {invoice.get('id')}: {e}")
 			
 			return jsonify({"status": "success"}), HTTPStatus.OK
 			
