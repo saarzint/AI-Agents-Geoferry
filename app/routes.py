@@ -215,7 +215,65 @@ def register_routes(app: Flask) -> None:
 			"status": "healthy",
 			"message": "PG Admit API is running"
 		}), HTTPStatus.OK
-		
+
+	@app.get("/tokens/balance/<int:user_profile_id>")
+	def get_token_balance(user_profile_id: int):
+		"""
+		Return the current token balance for a user.
+		"""
+		try:
+			user_exists, error_response = _validate_user_exists(user_profile_id)
+			if not user_exists:
+				return jsonify(error_response), HTTPStatus.NOT_FOUND
+			
+			supabase = get_supabase()
+			resp = supabase.table("user_profile").select("token_balance").eq("id", user_profile_id).execute()
+			if not resp.data:
+				return jsonify({"error": f"User profile {user_profile_id} not found"}), HTTPStatus.NOT_FOUND
+			
+			return jsonify({
+				"user_profile_id": user_profile_id,
+				"token_balance": resp.data[0].get("token_balance", 0)
+			}), HTTPStatus.OK
+		except Exception as exc:
+			return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
+
+	@app.get("/tokens/history/<int:user_profile_id>")
+	def get_token_history(user_profile_id: int):
+		"""
+		Return recent token transactions for a user (descending by created_at).
+		Optional query param: default 50.
+		"""
+		try:
+			user_exists, error_response = _validate_user_exists(user_profile_id)
+			if not user_exists:
+				return jsonify(error_response), HTTPStatus.NOT_FOUND
+
+			limit_param = request.args.get("limit", "50")
+			try:
+				limit = max(1, min(int(limit_param), 200))
+			except ValueError:
+				continue_limit = 50
+				limit = continue_limit
+
+			supabase = get_supabase()
+			resp = (
+				supabase
+				.table("token_transactions")
+				.select("*")
+				.eq("user_profile_id", user_profile_id)
+				.order("created_at", desc=True)
+				.limit(limit)
+				.execute()
+			)
+			return jsonify({
+				"user_profile_id": user_profile_id,
+				"count": len(resp.data) if resp.data else 0,
+				"transactions": resp.data or []
+			}), HTTPStatus.OK
+		except Exception as exc:
+			return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
+
 	@app.post("/search_universities")
 	def search_universities():
 		payload = request.get_json(silent=True) or {}
@@ -466,63 +524,6 @@ def register_routes(app: Flask) -> None:
 			
 		except Exception as exc:
 			return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
-
-		@app.get("/tokens/balance/<int:user_profile_id>")
-		def get_token_balance(user_profile_id: int):
-			"""
-			Return the current token balance for a user.
-			"""
-			try:
-				user_exists, error_response = _validate_user_exists(user_profile_id)
-				if not user_exists:
-					return jsonify(error_response), HTTPStatus.NOT_FOUND
-				
-				supabase = get_supabase()
-				resp = supabase.table("user_profile").select("token_balance").eq("id", user_profile_id).execute()
-				if not resp.data:
-					return jsonify({"error": f"User profile {user_profile_id} not found"}), HTTPStatus.NOT_FOUND
-				
-				return jsonify({
-					"user_profile_id": user_profile_id,
-					"token_balance": resp.data[0].get("token_balance", 0)
-				}), HTTPStatus.OK
-			except Exception as exc:
-				return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
-
-		@app.get("/tokens/history/<int:user_profile_id>")
-		def get_token_history(user_profile_id: int):
-			"""
-			Return recent token transactions for a user (descending by created_at).
-			Optional query param: limit (default 50).
-			"""
-			try:
-				user_exists, error_response = _validate_user_exists(user_profile_id)
-				if not user_exists:
-					return jsonify(error_response), HTTPStatus.NOT_FOUND
-
-				limit_param = request.args.get("limit", "50")
-				try:
-					limit = max(1, min(int(limit_param), 200))
-				except ValueError:
-					limit = 50
-
-				supabase = get_supabase()
-				resp = (
-					supabase
-					.table("token_transactions")
-					.select("*")
-					.eq("user_profile_id", user_profile_id)
-					.order("created_at", desc=True)
-					.limit(limit)
-					.execute()
-				)
-				return jsonify({
-					"user_profile_id": user_profile_id,
-					"count": len(resp.data) if resp.data else 0,
-					"transactions": resp.data or []
-				}), HTTPStatus.OK
-			except Exception as exc:
-				return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
 
 	@app.get("/results/<int:user_profile_id>")
 	def get_results(user_profile_id: int):
