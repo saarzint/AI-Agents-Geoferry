@@ -18,6 +18,23 @@ create table if not exists public.user_profile (
     updated_at timestamptz default now()
 );
 
+
+-- Add token_balance column
+ALTER TABLE public.user_profile 
+ADD COLUMN IF NOT EXISTS token_balance INT DEFAULT 0;
+
+-- Create token usage log table
+CREATE TABLE IF NOT EXISTS public.user_token_usage (
+    id SERIAL PRIMARY KEY,
+    user_profile_id INT NOT NULL REFERENCES public.user_profile(id) ON DELETE CASCADE,
+    endpoint TEXT NOT NULL,
+    api_provider TEXT NOT NULL DEFAULT 'openai',
+    tokens_used INT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_token_usage_user ON public.user_token_usage (user_profile_id, created_at DESC);
+
 -- reference table for universities (optional bootstrap/mock data)
 create table if not exists public.universities (
 	id serial primary key,
