@@ -7,7 +7,8 @@ import os
 
 
 def create_app() -> Flask:
-	app = Flask(__name__)
+	frontend_path = os.path.join(os.path.dirname(__file__), "static-frontend")
+	app = Flask(__name__, static_folder=frontend_path, static_url_path="/static-frontend")
 	CORS(app, resources={r"/*": {"origins": ["http://localhost:5173", "https://pgadmin-frontend-app.vercel.app"]}})
 	register_routes(app)
 	

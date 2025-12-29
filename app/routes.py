@@ -41,7 +41,7 @@ def _validate_user_exists(user_profile_id: int) -> tuple[bool, dict]:
 		}
 
 def register_routes(app: Flask) -> None:
-	@app.get("/")
+	@app.get("/api")
 	def home():
 		return jsonify({
 			"message": "Welcome to PG Admit - AI AGENTS",
@@ -65,7 +65,18 @@ def register_routes(app: Flask) -> None:
 				"log_agent_report": "/admissions/log_agent_report"
 			}
 		}), HTTPStatus.OK
-	
+
+	from flask import send_from_directory
+	import os
+	# Serve the React frontend for all unknown routes (SPA fallback)
+	@app.route("/", defaults={"path": ""})
+	@app.route("/<path:path>")
+	def serve_frontend(path):
+		if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
+			return send_from_directory(app.static_folder, path)
+		else:
+			return send_from_directory(app.static_folder, "index.html")
+
 	@app.get("/health")
 	def health_check():
 		return jsonify({
