@@ -87,7 +87,7 @@ Content:
 
         try:
             response = self.client.chat.completions.create(
-                model="gpt-4o",  # Using gpt-4o for better extraction accuracy
+                model="gpt-5.1",  # Using gpt-5.1 for better extraction accuracy
                 messages=[
                     {"role": "system", "content": "You are a precise data extraction assistant. You specialize in extracting application deadlines, required documents, and admission requirements from university websites. Always output valid JSON only, following the schema exactly."},
                     {"role": "user", "content": prompt}
