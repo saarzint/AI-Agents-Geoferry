@@ -12,9 +12,19 @@ import requests
 
 from app.checklist_formatter import to_json_with_labels, to_markdown
 
-# Add agents module to path
+# Add agents module to path and import crews once
 agents_path = os.path.join(os.path.dirname(__file__), '..', 'agents', 'src')
-sys.path.append(os.path.abspath(agents_path))
+agents_abspath = os.path.abspath(agents_path)
+if agents_abspath not in sys.path:
+	sys.path.append(agents_abspath)
+
+try:
+	from agents.crew import SearchCrew, ManagerCrew  # type: ignore[import]
+	from crewai import Crew, Process  # type: ignore[import]
+	AGENTS_AVAILABLE = True
+except ImportError as e:
+	AGENTS_AVAILABLE = False
+	print(f"⚠️ Agents not available: {e}")
 
 def _validate_user_exists(user_profile_id: int) -> tuple[bool, dict]:
 	"""
@@ -124,7 +134,8 @@ def register_routes(app: Flask) -> None:
 			
 			# Execute CrewAI agent and store results
 			try:
-				from agents.crew import SearchCrew
+				if not AGENTS_AVAILABLE:
+					return jsonify({"error": "CrewAI agents not available"}), HTTPStatus.SERVICE_UNAVAILABLE
 				# Use user-provided search_request if available, else fallback to default
 				search_request = payload.get("search_request", "Find universities that match my profile")
 				# Run the agent with retry loop for invalid JSON
@@ -160,7 +171,15 @@ def register_routes(app: Flask) -> None:
 						print("=" * 60)
 						
 						result = university_crew.kickoff(inputs=inputs)
-						
+
+						# Extract tokens (1 line)
+						from .token_tracker import extract_crewai_tokens, update_user_tokens
+						token_info = extract_crewai_tokens(result)
+						tokens_used = token_info.get('total_tokens', 0)
+
+						# Update user balance (1 line)
+						token_update = update_user_tokens(user_profile_id, tokens_used, request.endpoint)
+
 						# Parse agent output
 						if hasattr(result, 'raw'):
 							agent_output = result.raw
@@ -290,7 +309,11 @@ def register_routes(app: Flask) -> None:
 					"search_id": search_id,
 					"universities_found": len(universities),
 					"universities_stored": stored_count,
-					"results_endpoint": f"/results/{user_profile_id}"
+					"results_endpoint": f"/results/{user_profile_id}",
+					"token_usage": {
+						"tokens_used": tokens_used,
+						"remaining_tokens": token_update.get("remaining_tokens", 0)
+      				} if token_update else None
 				}), HTTPStatus.OK
 				
 			except ImportError:
@@ -384,8 +407,9 @@ def register_routes(app: Flask) -> None:
 			# This eliminates the complex delta vs full search distinction that was causing duplicates
 			# Execute Scholarship Search Agent
 			try:
-				from agents.crew import SearchCrew
-				
+				if not AGENTS_AVAILABLE:
+					return jsonify({"error": "CrewAI agents not available"}), HTTPStatus.SERVICE_UNAVAILABLE
+
 				# UNIFIED APPROACH: Always use comprehensive 'full' search logic
 				# Whether triggered manually or by profile changes, same comprehensive behavior:
 				# - Complete scholarship discovery and matching
@@ -425,6 +449,14 @@ def register_routes(app: Flask) -> None:
 					try:
 						result = scholarship_crew.kickoff(inputs=inputs)
 						
+						# Extract tokens (1 line)
+						from .token_tracker import extract_crewai_tokens, update_user_tokens
+						token_info = extract_crewai_tokens(result)
+						tokens_used = token_info.get('total_tokens', 0)
+
+						# Update user balance (1 line)
+						token_update = update_user_tokens(user_profile_id, tokens_used, request.endpoint)
+
 						# Parse agent output
 						if hasattr(result, 'raw'):
 							agent_output = result.raw
@@ -499,7 +531,11 @@ def register_routes(app: Flask) -> None:
 					"total_scholarships_stored": total_count,
 					"results_endpoint": f"/results/scholarships/{user_profile_id}",
 					"note": "Expired scholarships automatically filtered out before storage",
-					"disclaimer": "This system provides scholarship opportunity matching based on eligibility criteria. We cannot guarantee that users will win any scholarships."
+					"disclaimer": "This system provides scholarship opportunity matching based on eligibility criteria. We cannot guarantee that users will win any scholarships.",
+					"token_usage": {
+						"tokens_used": tokens_used,
+						"remaining_tokens": token_update.get("remaining_tokens", 0)
+      				} if token_update else None
 				}
 				
 				return app.response_class(
@@ -698,7 +734,8 @@ def register_routes(app: Flask) -> None:
 			# Attempt to run Visa Agent if available
 			agent_used = False
 			try:
-				from agents.crew import SearchCrew
+				if not AGENTS_AVAILABLE:
+					return jsonify({"error": "CrewAI agents not available"}), HTTPStatus.SERVICE_UNAVAILABLE
 				crew = SearchCrew()
 				print("Crew created")
 				print("=" * 60)
@@ -724,6 +761,14 @@ def register_routes(app: Flask) -> None:
 					print(inputs)
 					print("=" * 60)
 					result = visa_crew.kickoff(inputs=inputs)
+					# Extract tokens (1 line)
+					from .token_tracker import extract_crewai_tokens, update_user_tokens
+					token_info = extract_crewai_tokens(result)
+					tokens_used = token_info.get('total_tokens', 0)
+
+					# Update user balance (1 line)
+					token_update = update_user_tokens(user_profile_id, tokens_used, request.endpoint)
+     
 					agent_output = result.raw if hasattr(result, 'raw') else str(result)
 					# Extract JSON object or array from output
 					print("Agent output:")
@@ -816,7 +861,11 @@ def register_routes(app: Flask) -> None:
 					"destination": destination,
 					"count": len(resp.data) if resp.data else 0,
 					"agent_refresh_attempted": agent_used and refresh,
-					"results": resp.data or []
+					"results": resp.data or [],
+					"token_usage": { 
+						"tokens_used": tokens_used,
+						"remaining_tokens": token_update.get("remaining_tokens", 0)
+      				} if token_update else None
 				}, indent=2, ensure_ascii=False),
 				status=HTTPStatus.OK,
 				mimetype='application/json'
@@ -846,7 +895,8 @@ def register_routes(app: Flask) -> None:
 			agent_used = False
 			if refresh:
 				try:
-					from agents.crew import SearchCrew
+					if not AGENTS_AVAILABLE:
+						return jsonify({"error": "CrewAI agents not available"}), HTTPStatus.SERVICE_UNAVAILABLE
 					crew = SearchCrew()
 					visa_task_getter = getattr(crew, 'visa_search_task', None)
 					visa_agent_getter = getattr(crew, 'visa_search_agent', None)
@@ -861,6 +911,14 @@ def register_routes(app: Flask) -> None:
 							verbose=True
 						)
 						result = visa_crew.kickoff(inputs={'citizenship_country': citizenship, 'destination_country': destination, 'user_id': user_profile_id})
+						# Extract tokens (1 line)
+						from .token_tracker import extract_crewai_tokens, update_user_tokens
+						token_info = extract_crewai_tokens(result)
+						tokens_used = token_info.get('total_tokens', 0)
+
+						# Update user balance (1 line)
+						token_update = update_user_tokens(user_profile_id, tokens_used, request.endpoint)
+
 						agent_output = result.raw if hasattr(result, 'raw') else str(result)
 						print(agent_output)
 						cleaned = agent_output.strip()
@@ -921,7 +979,11 @@ def register_routes(app: Flask) -> None:
 					"destination": destination,
 					"count": len(resp.data) if resp.data else 0,
 					"agent_refresh_attempted": agent_used and refresh,
-					"results": resp.data or []
+					"results": resp.data or [],
+					"token_usage": { 
+						"tokens_used": tokens_used,
+						"remaining_tokens": token_update.get("remaining_tokens", 0)
+      				} if token_update else None
 				}, indent=2, ensure_ascii=False),
 				status=HTTPStatus.OK,
 				mimetype='application/json'
@@ -1142,7 +1204,8 @@ def register_routes(app: Flask) -> None:
 					print(f"[WARN] Failed to update user_profile before agent run: {e}")
 			
 			try:
-				from agents.crew import SearchCrew
+				if not AGENTS_AVAILABLE:
+					return jsonify({"error": "CrewAI agents not available"}), HTTPStatus.SERVICE_UNAVAILABLE
 				crew = SearchCrew()
 				
 				app_req_task = crew.application_requirement_task()
@@ -1166,6 +1229,14 @@ def register_routes(app: Flask) -> None:
 					"search_type": "specific"
 				}
 				result = application_requirement_crew.kickoff(inputs=inputs)
+
+				# Extract tokens (1 line)
+				from .token_tracker import extract_crewai_tokens, update_user_tokens
+				token_info = extract_crewai_tokens(result)
+				tokens_used = token_info.get('total_tokens', 0)
+
+				# Update user balance (1 line)
+				token_update = update_user_tokens(user_profile_id, tokens_used, request.endpoint)
 
 				requirements_data = []
 				formatted_json = None
@@ -1273,7 +1344,11 @@ def register_routes(app: Flask) -> None:
 					"search_type": "specific",
 					"formatted_json": formatted_json,
 					"formatted_markdown": formatted_markdown,
-					"disclaimer": "All information is sourced from the official university website. Please verify before submitting your application."
+					"disclaimer": "All information is sourced from the official university website. Please verify before submitting your application.",
+					"token_usage": { 
+						"tokens_used": tokens_used,
+						"remaining_tokens": token_update.get("remaining_tokens", 0)
+      				} if token_update else None
 				}
 
 				return app.response_class(
@@ -1337,7 +1412,8 @@ def register_routes(app: Flask) -> None:
 
 			if is_stale:
 				try:
-					from agents.crew import SearchCrew
+					if not AGENTS_AVAILABLE:
+						return jsonify({"error": "CrewAI agents not available"}), HTTPStatus.SERVICE_UNAVAILABLE
 					crew = SearchCrew()
 					req_agent = crew.application_requirement_agent()
 					result = req_agent.get_requirements(
@@ -1441,8 +1517,11 @@ def register_routes(app: Flask) -> None:
 			
 			# Execute Admissions Counselor Agent with HIERARCHICAL ORCHESTRATION
 			try:
-				from agents.crew import ManagerCrew
-				
+				if not AGENTS_AVAILABLE:
+					print("⚠️ CrewAI agents not available, falling back to cached summary")
+					summary_data = None
+					raise ImportError("CrewAI agents not available")
+
 				# Use ManagerCrew which has hierarchical process built-in
 				manager_crew_instance = ManagerCrew()
 				
@@ -1468,6 +1547,14 @@ def register_routes(app: Flask) -> None:
 				print("=" * 60)
 				
 				result = admissions_crew.kickoff(inputs=inputs)
+				# Extract tokens (1 line)
+				from .token_tracker import extract_crewai_tokens, update_user_tokens
+				token_info = extract_crewai_tokens(result)
+				tokens_used = token_info.get('total_tokens', 0)
+
+				# Update user balance (1 line)
+				token_update = update_user_tokens(user_id, tokens_used, request.endpoint)
+
 				agent_output = result.raw if hasattr(result, 'raw') else str(result)
 				
 				print(f"\nADMISSIONS COUNSELOR OUTPUT:")
@@ -1538,7 +1625,11 @@ def register_routes(app: Flask) -> None:
 					"scholarships_found": len(scholarships_resp.data) if scholarships_resp.data else 0,
 					"application_requirements": len(app_reqs_resp.data) if app_reqs_resp.data else 0,
 					"visa_info_count": len(visa_resp.data) if visa_resp.data else 0,
-					"profile_name": profile_resp.data[0]["full_name"] if profile_resp.data and len(profile_resp.data) > 0 else None
+					"profile_name": profile_resp.data[0]["full_name"] if profile_resp.data and len(profile_resp.data) > 0 else None,
+					"token_usage": { 
+						"tokens_used": tokens_used,
+						"remaining_tokens": token_update.get("remaining_tokens", 0)
+      				} if token_update else None
 				}
 				
 				# Save or update admissions_summary in database
@@ -1590,8 +1681,9 @@ def register_routes(app: Flask) -> None:
 			
 			# Execute Next Steps Generator Agent using SearchCrew
 			try:
-				from agents.crew import SearchCrew
-				from crewai import Crew, Process
+				if not AGENTS_AVAILABLE:
+					print("⚠️ CrewAI agents not available, falling back to empty next steps")
+					raise ImportError("CrewAI agents not available")
 				
 				# Create SearchCrew instance
 				search_crew_instance = SearchCrew()
@@ -1617,6 +1709,14 @@ def register_routes(app: Flask) -> None:
 				
 				print(f"\n=== GENERATING NEXT STEPS - User ID: {user_id} ===")
 				result = next_steps_crew.kickoff(inputs=inputs)
+				# Extract tokens (1 line)
+				from .token_tracker import extract_crewai_tokens, update_user_tokens
+				token_info = extract_crewai_tokens(result)
+				tokens_used = token_info.get('total_tokens', 0)
+
+				# Update user balance (1 line)
+				token_update = update_user_tokens(user_id, tokens_used, request.endpoint)
+
 				agent_output = result.raw if hasattr(result, 'raw') else str(result)
 				
 				print(f"\nNEXT STEPS GENERATOR OUTPUT:")
@@ -1670,7 +1770,11 @@ def register_routes(app: Flask) -> None:
 					"user_id": user_id,
 					"next_steps": next_steps,
 					"total_count": len(next_steps),
-					"last_updated": datetime.now().isoformat()
+					"last_updated": datetime.now().isoformat(),
+					"token_usage": { 
+						"tokens_used": tokens_used,
+						"remaining_tokens": token_update.get("remaining_tokens", 0)
+      				} if token_update else None
 				}, indent=2, ensure_ascii=False, default=str),
 				status=HTTPStatus.OK,
 				mimetype='application/json'
