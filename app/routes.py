@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, g
 from http import HTTPStatus
 import json
 import sys
@@ -7,6 +7,7 @@ import re
 from datetime import datetime, timedelta
 from .supabase_client import get_supabase
 from .utils import _generate_visa_report, _generate_html_report, _detect_visa_changes
+from .auth import require_auth, optional_auth
 
 import requests
 
@@ -48,6 +49,12 @@ def register_routes(app: Flask) -> None:
 			"version": "1.0.0",
 			"endpoints": {
 				"health": "/health",
+				"get_profile": "/profile/<user_profile_id>",
+				"create_profile": "/profile",
+				"update_profile": "/profile/<user_profile_id>",
+				"delete_profile": "/profile/<user_profile_id>",
+				"get_token_balance": "/tokens/balance/<user_profile_id>",
+				"add_tokens": "/tokens/add/<user_profile_id>",
 				"search_universities": "/search_universities",
 				"search_scholarships": "/search_scholarships",
 				"get_university_results": "/results/<user_profile_id>",
@@ -66,25 +73,295 @@ def register_routes(app: Flask) -> None:
 			}
 		}), HTTPStatus.OK
 
-	from flask import send_from_directory
-	import os
-	# Serve the React frontend for all unknown routes (SPA fallback)
-	@app.route("/", defaults={"path": ""})
-	@app.route("/<path:path>")
-	def serve_frontend(path):
-		if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
-			return send_from_directory(app.static_folder, path)
-		else:
-			return send_from_directory(app.static_folder, "index.html")
-
 	@app.get("/health")
 	def health_check():
 		return jsonify({
 			"status": "healthy",
 			"message": "PG Admit API is running"
 		}), HTTPStatus.OK
-		
+
+	# ==================== USER PROFILE CRUD ====================
+
+	@app.get("/profile/<int:user_profile_id>")
+	@require_auth
+	def get_profile(user_profile_id: int):
+		"""
+		Get a user profile by ID.
+
+		GET /profile/{user_profile_id}
+		Headers: Authorization: Bearer <supabase_jwt_token>
+
+		Returns: Full user profile data
+		"""
+		try:
+			supabase = get_supabase()
+			profile_resp = supabase.table("user_profile").select("*").eq("id", user_profile_id).execute()
+
+			if not profile_resp.data:
+				return jsonify({
+					"error": f"User profile {user_profile_id} not found"
+				}), HTTPStatus.NOT_FOUND
+
+			return jsonify({
+				"success": True,
+				"profile": profile_resp.data[0]
+			}), HTTPStatus.OK
+
+		except Exception as exc:
+			return jsonify({
+				"error": f"Failed to fetch profile: {str(exc)}"
+			}), HTTPStatus.INTERNAL_SERVER_ERROR
+
+	@app.post("/profile")
+	@require_auth
+	def create_profile():
+		"""
+		Create a new user profile.
+
+		POST /profile
+		Headers: Authorization: Bearer <supabase_jwt_token>
+		Body: {
+			"full_name": "required",
+			"citizenship_country": "optional",
+			"destination_country": "optional",
+			"gpa": "optional (numeric)",
+			"test_scores": "optional (jsonb)",
+			"academic_background": "optional (jsonb)",
+			"intended_major": "optional",
+			"extracurriculars": "optional (array)",
+			"financial_aid_eligibility": "optional (boolean)",
+			"budget": "optional (integer)",
+			"preferences": "optional (jsonb)"
+		}
+
+		Returns: Created profile with ID
+		"""
+		try:
+			payload = request.get_json(silent=True) or {}
+
+			# Validate required field
+			if not payload.get("full_name"):
+				return jsonify({
+					"error": "Field 'full_name' is required"
+				}), HTTPStatus.BAD_REQUEST
+
+			# Build profile data with allowed fields only
+			allowed_fields = [
+				"full_name", "citizenship_country", "destination_country",
+				"gpa", "test_scores", "academic_background", "intended_major",
+				"extracurriculars", "financial_aid_eligibility", "budget", "preferences"
+			]
+			profile_data = {k: v for k, v in payload.items() if k in allowed_fields}
+
+			supabase = get_supabase()
+			result = supabase.table("user_profile").insert(profile_data).execute()
+
+			if not result.data:
+				return jsonify({
+					"error": "Failed to create profile"
+				}), HTTPStatus.INTERNAL_SERVER_ERROR
+
+			return jsonify({
+				"success": True,
+				"message": "Profile created successfully",
+				"profile": result.data[0]
+			}), HTTPStatus.CREATED
+
+		except Exception as exc:
+			return jsonify({
+				"error": f"Failed to create profile: {str(exc)}"
+			}), HTTPStatus.INTERNAL_SERVER_ERROR
+
+	@app.put("/profile/<int:user_profile_id>")
+	@require_auth
+	def update_profile(user_profile_id: int):
+		"""
+		Update an existing user profile.
+
+		PUT /profile/{user_profile_id}
+		Headers: Authorization: Bearer <supabase_jwt_token>
+		Body: Fields to update (same as POST, but all optional)
+
+		Returns: Updated profile
+
+		Note: Updates are logged to user_profile_changes table for event-driven re-searches.
+		"""
+		try:
+			payload = request.get_json(silent=True) or {}
+
+			if not payload:
+				return jsonify({
+					"error": "No update data provided"
+				}), HTTPStatus.BAD_REQUEST
+
+			supabase = get_supabase()
+
+			# Check if profile exists
+			existing = supabase.table("user_profile").select("*").eq("id", user_profile_id).execute()
+			if not existing.data:
+				return jsonify({
+					"error": f"User profile {user_profile_id} not found"
+				}), HTTPStatus.NOT_FOUND
+
+			old_profile = existing.data[0]
+
+			# Build update data with allowed fields only
+			allowed_fields = [
+				"full_name", "citizenship_country", "destination_country",
+				"gpa", "test_scores", "academic_background", "intended_major",
+				"extracurriculars", "financial_aid_eligibility", "budget", "preferences"
+			]
+			update_data = {k: v for k, v in payload.items() if k in allowed_fields}
+			update_data["updated_at"] = datetime.now().isoformat()
+
+			# Log changes to user_profile_changes for event listener
+			for field, new_value in update_data.items():
+				if field == "updated_at":
+					continue
+				old_value = old_profile.get(field)
+				if old_value != new_value:
+					try:
+						supabase.table("user_profile_changes").insert({
+							"user_profile_id": user_profile_id,
+							"field_name": field,
+							"old_value": json.dumps(old_value) if not isinstance(old_value, str) else old_value,
+							"new_value": json.dumps(new_value) if not isinstance(new_value, str) else new_value
+						}).execute()
+					except Exception as log_exc:
+						print(f"[WARN] Failed to log profile change: {log_exc}")
+
+			# Perform update
+			result = supabase.table("user_profile").update(update_data).eq("id", user_profile_id).execute()
+
+			if not result.data:
+				return jsonify({
+					"error": "Failed to update profile"
+				}), HTTPStatus.INTERNAL_SERVER_ERROR
+
+			return jsonify({
+				"success": True,
+				"message": "Profile updated successfully",
+				"profile": result.data[0]
+			}), HTTPStatus.OK
+
+		except Exception as exc:
+			return jsonify({
+				"error": f"Failed to update profile: {str(exc)}"
+			}), HTTPStatus.INTERNAL_SERVER_ERROR
+
+	@app.delete("/profile/<int:user_profile_id>")
+	@require_auth
+	def delete_profile(user_profile_id: int):
+		"""
+		Delete a user profile.
+
+		DELETE /profile/{user_profile_id}
+		Headers: Authorization: Bearer <supabase_jwt_token>
+
+		Returns: Confirmation message
+
+		Warning: This will cascade delete all related data (search results, scholarships, etc.)
+		"""
+		try:
+			supabase = get_supabase()
+
+			# Check if profile exists
+			existing = supabase.table("user_profile").select("id").eq("id", user_profile_id).execute()
+			if not existing.data:
+				return jsonify({
+					"error": f"User profile {user_profile_id} not found"
+				}), HTTPStatus.NOT_FOUND
+
+			# Delete profile (cascades to related tables)
+			supabase.table("user_profile").delete().eq("id", user_profile_id).execute()
+
+			return jsonify({
+				"success": True,
+				"message": f"Profile {user_profile_id} deleted successfully"
+			}), HTTPStatus.OK
+
+		except Exception as exc:
+			return jsonify({
+				"error": f"Failed to delete profile: {str(exc)}"
+			}), HTTPStatus.INTERNAL_SERVER_ERROR
+
+	# ==================== END USER PROFILE CRUD ====================
+
+	# ==================== TOKEN BALANCE ENDPOINTS ====================
+
+	@app.get("/tokens/balance/<int:user_profile_id>")
+	@require_auth
+	def get_token_balance(user_profile_id: int):
+		"""
+		Get user's token balance and usage history.
+
+		GET /tokens/balance/{user_profile_id}
+		Headers: Authorization: Bearer <supabase_jwt_token>
+
+		Returns: Token balance and recent usage
+		"""
+		try:
+			from .token_tracker import get_user_token_balance
+
+			result = get_user_token_balance(user_profile_id)
+
+			if not result.get("success"):
+				return jsonify({
+					"error": result.get("error", "Failed to get token balance")
+				}), HTTPStatus.NOT_FOUND if "not found" in result.get("error", "").lower() else HTTPStatus.INTERNAL_SERVER_ERROR
+
+			return jsonify(result), HTTPStatus.OK
+
+		except Exception as exc:
+			return jsonify({
+				"error": f"Failed to get token balance: {str(exc)}"
+			}), HTTPStatus.INTERNAL_SERVER_ERROR
+
+	@app.post("/tokens/add/<int:user_profile_id>")
+	@require_auth
+	def add_tokens(user_profile_id: int):
+		"""
+		Add tokens to user's balance.
+
+		POST /tokens/add/{user_profile_id}
+		Headers: Authorization: Bearer <supabase_jwt_token>
+		Body: {
+			"tokens": int (required),
+			"reason": str (optional, default: "manual_add")
+		}
+
+		Returns: Updated token balance
+		"""
+		try:
+			from .token_tracker import add_tokens_to_user
+
+			payload = request.get_json(silent=True) or {}
+			tokens = payload.get("tokens")
+			reason = payload.get("reason", "manual_add")
+
+			if not tokens or not isinstance(tokens, int) or tokens <= 0:
+				return jsonify({
+					"error": "Field 'tokens' is required and must be a positive integer"
+				}), HTTPStatus.BAD_REQUEST
+
+			result = add_tokens_to_user(user_profile_id, tokens, reason)
+
+			if not result.get("success"):
+				return jsonify({
+					"error": result.get("error", "Failed to add tokens")
+				}), HTTPStatus.NOT_FOUND if "not found" in result.get("error", "").lower() else HTTPStatus.INTERNAL_SERVER_ERROR
+
+			return jsonify(result), HTTPStatus.OK
+
+		except Exception as exc:
+			return jsonify({
+				"error": f"Failed to add tokens: {str(exc)}"
+			}), HTTPStatus.INTERNAL_SERVER_ERROR
+
+	# ==================== END TOKEN BALANCE ENDPOINTS ====================
+
 	@app.post("/search_universities")
+	@require_auth
 	def search_universities():
 		payload = request.get_json(silent=True) or {}
 		user_profile_id = payload.get("user_profile_id")
@@ -309,6 +586,7 @@ def register_routes(app: Flask) -> None:
 			return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
 
 	@app.get("/results/<int:user_profile_id>")
+	@require_auth
 	def get_results(user_profile_id: int):
 		try:
 			supabase = get_supabase()
@@ -344,6 +622,7 @@ def register_routes(app: Flask) -> None:
 			return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
 
 	@app.post("/search_scholarships")
+	@require_auth
 	def search_scholarships():
 		"""
 		Execute scholarship search for a user profile.
@@ -532,6 +811,7 @@ def register_routes(app: Flask) -> None:
 			return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
 
 	@app.get("/results/scholarships/<int:user_profile_id>")
+	@require_auth
 	def get_scholarship_results(user_profile_id: int):
 		"""
 		Retrieve scholarship search results for a user.
@@ -664,6 +944,7 @@ def register_routes(app: Flask) -> None:
 	# Visa Information Endpoints
 	# =======================================================
 	@app.post("/visa_info")
+	@require_auth
 	def visa_info():
 		"""
 		Trigger visa information retrieval for a citizenship → destination pair.
@@ -825,6 +1106,7 @@ def register_routes(app: Flask) -> None:
 			return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
 
 	@app.get("/visa_info/<string:citizenship>/<string:destination>")
+	@require_auth
 	def get_visa_info(citizenship: str, destination: str):
 		"""
 		Return cached or refreshed visa data for citizenship → destination.
@@ -930,6 +1212,7 @@ def register_routes(app: Flask) -> None:
 			return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
 
 	@app.get("/visa_report/<string:citizenship>/<string:destination>")
+	@require_auth
 	def get_visa_report(citizenship: str, destination: str):
 		"""
 		Generate user-facing visa checklist/report from structured data.
@@ -985,6 +1268,7 @@ def register_routes(app: Flask) -> None:
 			return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
 
 	@app.get("/visa_alerts")
+	@require_auth
 	def get_visa_alerts():
 		"""
 		Get pending visa policy change alerts for a user.
@@ -1050,6 +1334,7 @@ def register_routes(app: Flask) -> None:
 			return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
 
 	@app.post("/visa_alerts/mark_sent")
+	@require_auth
 	def mark_visa_alerts_sent():
 		"""
 		Mark visa alerts as sent (acknowledged by user/counselor).
@@ -1099,6 +1384,7 @@ def register_routes(app: Flask) -> None:
 	# =======================================================
 
 	@app.post("/fetch_application_requirements")
+	@require_auth
 	def fetch_application_requirements():
 		"""
 		Fetch and structure application requirements based on user_profile_id, university, and program.
@@ -1290,6 +1576,7 @@ def register_routes(app: Flask) -> None:
 			return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
 
 	@app.get("/application_requirements/<string:university>/<string:program>")
+	@require_auth
 	def get_application_requirements(university: str, program: str):
 		"""
 		Retrieve the latest application requirements checklist for a user profile, university, and program.
@@ -1424,6 +1711,7 @@ def register_routes(app: Flask) -> None:
 	# =======================================================
 	
 	@app.get("/admissions/summary/<int:user_id>")
+	@require_auth
 	def admissions_summary(user_id: int):
 		"""
 		Get the latest overall admissions status for a user.
@@ -1573,6 +1861,7 @@ def register_routes(app: Flask) -> None:
 			return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
 	
 	@app.get("/admissions/next_steps/<int:user_id>")
+	@require_auth
 	def admissions_next_steps(user_id: int):
 		"""
 		Get prioritized next actions for a user using the Next Steps Generator Agent.
@@ -1680,6 +1969,7 @@ def register_routes(app: Flask) -> None:
 			return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
 	
 	@app.post("/admissions/update_stage")
+	@require_auth
 	def update_admissions_stage():
 		"""
 		Update the user's admissions progress stage.
@@ -1750,6 +2040,7 @@ def register_routes(app: Flask) -> None:
 			return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
 	
 	@app.post("/admissions/log_agent_report")
+	@require_auth
 	def log_agent_report():
 		"""
 		Accept reports from other agents and log them.
@@ -1802,6 +2093,7 @@ def register_routes(app: Flask) -> None:
 	# Admissions Counselor Notifications (Optional MVP+)
 	# =======================================================
 	@app.post("/counselor_notifications")
+	@require_auth
 	def counselor_notifications():
 		"""
 		Accepts notifications related to application requirements updates or ambiguities for Admissions Counselor workflows.
@@ -1844,3 +2136,20 @@ def register_routes(app: Flask) -> None:
 			)
 		except Exception as exc:
 			return jsonify({"error": str(exc)}), HTTPStatus.INTERNAL_SERVER_ERROR
+
+	# =======================================================
+	# SPA Fallback - MUST BE LAST (catches all unmatched routes)
+	# =======================================================
+	from flask import send_from_directory
+
+	@app.route("/", defaults={"path": ""})
+	@app.route("/<path:path>")
+	def serve_frontend(path):
+		"""
+		Serve the React frontend for all unknown routes (SPA fallback).
+		This route MUST be defined last to avoid intercepting API routes.
+		"""
+		if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
+			return send_from_directory(app.static_folder, path)
+		else:
+			return send_from_directory(app.static_folder, "index.html")

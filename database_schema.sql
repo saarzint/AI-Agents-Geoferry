@@ -317,3 +317,33 @@ CREATE POLICY "Allow all on agent_reports_log"
     ON public.agent_reports_log
     FOR ALL
     USING (TRUE);
+
+
+-- ==========================
+-- TOKEN TRACKING SCHEMA
+-- ==========================
+
+-- Add token_balance column to user_profile
+ALTER TABLE public.user_profile
+ADD COLUMN IF NOT EXISTS token_balance INTEGER DEFAULT 10000;  -- Default 10k tokens for new users
+
+-- User Token Usage Log Table
+CREATE TABLE IF NOT EXISTS public.user_token_usage (
+    id SERIAL PRIMARY KEY,
+    user_profile_id INT NOT NULL REFERENCES public.user_profile(id) ON DELETE CASCADE,
+    endpoint TEXT NOT NULL,                     -- e.g., "/search_universities", "/search_scholarships"
+    api_provider TEXT DEFAULT 'openai',         -- e.g., "openai", "anthropic"
+    tokens_used INTEGER NOT NULL,               -- Tokens consumed (negative for additions)
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Useful indices
+CREATE INDEX IF NOT EXISTS idx_user_token_usage_user ON public.user_token_usage (user_profile_id);
+CREATE INDEX IF NOT EXISTS idx_user_token_usage_created ON public.user_token_usage (created_at DESC);
+
+-- Enable RLS + temporary open policy
+ALTER TABLE public.user_token_usage ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all on user_token_usage"
+    ON public.user_token_usage
+    FOR ALL
+    USING (TRUE);
