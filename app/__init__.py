@@ -9,7 +9,15 @@ import os
 def create_app() -> Flask:
 	frontend_path = os.path.join(os.path.dirname(__file__), "static-frontend")
 	app = Flask(__name__, static_folder=frontend_path, static_url_path="/static-frontend")
-	CORS(app, resources={r"/*": {"origins": ["http://localhost:5173", "https://pgadmin-frontend-app.vercel.app"]}})
+	CORS(app, resources={r"/*": {
+		"origins": [
+			"http://localhost:5173",
+			"https://pgadmin-frontend-app.vercel.app",
+			"https://dashboard.pgadmit.com"
+		],
+		"methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+		"allow_headers": ["Content-Type", "Authorization"]
+	}})
 	register_routes(app)
 	
 	# Start profile change listener (simple polling)
